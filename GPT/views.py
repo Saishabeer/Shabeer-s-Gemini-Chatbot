@@ -12,9 +12,9 @@ from .gemini_service import gemini_chat
 from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session
 
 
-def _get_rag_response_with_sources(prompt, session_id):
+def _get_rag_response_with_sources(prompt, session_id, history=None):
     """Helper to get RAG answer and conditionally append sources."""
-    answer, srcs = rag_answer(prompt, session_id)
+    answer, srcs = rag_answer(prompt, session_id, history=history)
 
     # Only add sources if the answer doesn't contain the fallback phrase
     # and if sources were actually found.
@@ -147,8 +147,13 @@ def chat_view(request, session_id=None):
 
             # If a prompt was submitted along with the file, process it immediately.
             if prompt:
+                # Get history BEFORE adding the new user message
+                history = [
+                    {"role": m.role, "content": m.content}
+                    for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
+                ]
                 ChatMessage.objects.create(session=target_session, role='user', content=prompt)
-                ai_response = _get_rag_response_with_sources(prompt, target_session.id)
+                ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
                 ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
 
             return redirect('chat_session', session_id=target_session.id)
@@ -157,15 +162,16 @@ def chat_view(request, session_id=None):
         elif prompt:
             target_session = active_session or ChatSession.objects.create(user=request.user)
 
+            # Get history BEFORE adding the new user message
+            history = [
+                {"role": m.role, "content": m.content}
+                for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
+            ]
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
             if target_session.document_path:
-                ai_response = _get_rag_response_with_sources(prompt, target_session.id)
+                ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
             else:
-                history = [
-                    {"role": m.role, "content": m.content}
-                    for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
-                ]
                 ai_response = gemini_chat(prompt, history)
 
             ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)

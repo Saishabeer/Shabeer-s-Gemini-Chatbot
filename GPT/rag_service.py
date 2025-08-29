@@ -92,7 +92,7 @@ def _get_vectordb(session_id: int):
     )
 
 # --- Retrieval + Gemini generation ---
-def rag_answer(question: str, session_id: int, top_k: int = TOP_K_DEFAULT) -> Tuple[str, List[str]]:
+def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k: int = TOP_K_DEFAULT) -> Tuple[str, List[str]]:
     vectordb = _get_vectordb(session_id)
     docs = vectordb.similarity_search(question, k=top_k)
 
@@ -107,16 +107,29 @@ def rag_answer(question: str, session_id: int, top_k: int = TOP_K_DEFAULT) -> Tu
         sources.append(label)
 
     context = "\n\n".join(context_blocks)
-    prompt = (
-        "You are a helpful assistant. Your primary goal is to answer the user's question based on the provided CONTEXT.\n"
-        "1. First, search the CONTEXT for the answer. If you find the answer, respond with it and cite the relevant sources like [1], [2], etc.\n"
-        "2. If the answer is NOT found in the CONTEXT, you MUST state 'I don't have that information in the provided knowledge base, but I can answer using my general knowledge.' and then proceed to answer the question based on your own knowledge.\n\n"
+    
+    system_instruction = (
+        "You are a helpful assistant. Your primary goal is to answer the user's question based *exclusively* on the provided CONTEXT.\n"
+        "1. Read the user's QUESTION and the chat HISTORY to understand the full query.\n"
+        "2. Examine the CONTEXT provided. If the CONTEXT contains enough information to fully and directly answer the user's question, then generate a comprehensive answer based *only* on the CONTEXT and cite the sources like [1], [2], etc.\n"
+        "3. If the CONTEXT does *not* contain enough information to answer the question, you MUST start your response with the exact phrase 'I don't have that information in the provided knowledge base, but I can answer using my general knowledge.' and then proceed to answer the question using your own general knowledge.\n\n"
         f"CONTEXT:\n{context}\n\n"
-        f"QUESTION: {question}\n\n"
-        "Answer:"
     )
 
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    resp = model.generate_content(prompt)
+    # Convert our history list to Gemini's format
+    gemini_history = []
+    for m in history or []:
+        role = "model" if m.get("role") == "assistant" else "user"
+        gemini_history.append({"role": role, "parts": [m.get("content", "")]})
+
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=system_instruction
+    )
+    
+    # Start a chat session with the history and send the new question
+    chat = model.start_chat(history=gemini_history)
+    resp = chat.send_message(question)
+
     answer = (getattr(resp, "text", "") or "").strip()
     return answer, sources
