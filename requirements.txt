@@ -1,0 +1,9 @@
+django
+python-dotenv
+google-generativeai
+langchain>=0.2
+langchain-community>=0.2
+langchain-google-genai>=1.0.3
+chromadb>=0.5
+pypdf
+docx2txt

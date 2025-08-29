@@ -137,3 +137,11 @@ LOGIN_REDIRECT_URL = 'home'
 LOGIN_URL = 'login'
 # After logging out, redirect users back to the login page.
 LOGOUT_REDIRECT_URL = 'login'
+
+
+# Media (for uploaded docs)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Chroma persistent directory (per-session subfolders will be created)
+CHROMA_DIR = BASE_DIR / 'chroma'

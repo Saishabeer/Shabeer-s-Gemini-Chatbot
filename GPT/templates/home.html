@@ -37,8 +37,15 @@
   </div>
 
   <div class="chat-window">
-    <div class="message-area">
+    <div style="padding: 10px 20px 0;">
+    {% if messages %}
       {% for message in messages %}
+        <div class="alert {{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+    </div>
+    <div class="message-area">
+      {% for message in chat_messages %}
         <div class="message {{ message.role }}">
           <div class="message-content">{{ message.content|linebreaksbr }}</div>
         </div>
