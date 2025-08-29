@@ -93,10 +93,20 @@ def chat_view(request, session_id=None):
             messages.error(request, "Prompt cannot be empty.")
             return redirect(request.path)
 
-        # Scenario 1: A document is uploaded. This ALWAYS starts a new RAG session.
+        # Scenario 1: A document is uploaded.
         if uploaded_file:
-            # Create a new session for this document
-            session_for_rag = ChatSession.objects.create(user=request.user)
+            # If we are in an existing session, use it. Otherwise, create a new one.
+            if active_session:
+                session_for_rag = active_session
+                # If the session already had a document, we should clean up the old file.
+                if session_for_rag.document_path and os.path.exists(session_for_rag.document_path):
+                    try:
+                        os.remove(session_for_rag.document_path)
+                    except OSError as e:
+                        # Log the error, but don't block the user.
+                        print(f"Error deleting old file {session_for_rag.document_path}: {e}")
+            else:
+                session_for_rag = ChatSession.objects.create(user=request.user)
 
             # Save the file securely
             fs = FileSystemStorage(location=settings.MEDIA_ROOT / 'user_docs')
