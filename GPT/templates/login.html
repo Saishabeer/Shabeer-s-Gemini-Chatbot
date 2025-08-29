@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div class="container">
+  <img src="{% static 'images/techjays_profile.jpg' %}" alt="Logo">
+  <h2>Login</h2>
+
+  {% if messages %}
+    {% for message in messages %}
+      {# This uses the alert classes from style.css for consistent error/success styling #}
+      <div class="alert {{ message.tags }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <form action="{% url 'login' %}" method="POST">
+    {% csrf_token %}
+    <input type="text" name="username" placeholder="Email or Username" required>
+    <input type="password" name="password" placeholder="Password" required>
+    <button type="submit">Login</button>
+  </form>
+  <p>Don't have an account? <a href="{% url 'register' %}">Register</a></p>
+</div>
+{% endblock %}
