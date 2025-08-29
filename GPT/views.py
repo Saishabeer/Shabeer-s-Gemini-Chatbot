@@ -9,7 +9,7 @@ from django.core.files.storage import FileSystemStorage
 
 from .models import ChatSession, ChatMessage
 from .gemini_service import gemini_chat
-from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session
+from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session, has_vectorstore
 
 
 def _get_rag_response_with_sources(prompt, session_id, history=None):
@@ -81,6 +81,37 @@ def user_login(request):
 
     return render(request, "login.html")
 
+
+@login_required
+def delete_chat_session(request, session_id):
+    """Deletes a chat session and its related data."""
+    # Ensure it's a POST request for security
+    if request.method == "POST":
+        try:
+            # Get the session, ensuring it belongs to the current user
+            session_to_delete = ChatSession.objects.get(id=session_id, user=request.user)
+
+            # --- Cleanup RAG data ---
+            # 1. Delete the vector store if it exists
+            if has_vectorstore(session_to_delete.id):
+                delete_vectorstore_for_session(session_to_delete.id)
+
+            # 2. Delete the uploaded document file
+            if session_to_delete.document_path and os.path.exists(session_to_delete.document_path):
+                try:
+                    os.remove(session_to_delete.document_path)
+                except OSError as e:
+                    print(f"Error deleting document file {session_to_delete.document_path}: {e}")
+
+            # --- Delete the session from the database ---
+            session_to_delete.delete()
+            messages.success(request, "Chat session deleted successfully.")
+
+        except ChatSession.DoesNotExist:
+            messages.error(request, "Chat session not found.")
+
+    # Redirect to the home page after deletion or if the method is not POST
+    return redirect('home')
 
 # --- Consolidated and Corrected Chat View ---
 
