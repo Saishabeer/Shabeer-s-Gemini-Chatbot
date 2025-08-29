@@ -1,5 +1,6 @@
 import os
 from typing import Tuple, List
+import shutil
 from django.conf import settings
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -67,6 +68,16 @@ def ingest_document_for_session(session_id: int, file_path: str) -> Tuple[str, i
     vectordb.persist()
     return chroma_dir, len(chunks)
 
+def delete_vectorstore_for_session(session_id: int):
+    """Deletes the entire ChromaDB directory for a given session to allow for re-indexing."""
+    chroma_dir = _session_chroma_dir(session_id)
+    if os.path.exists(chroma_dir):
+        try:
+            shutil.rmtree(chroma_dir)
+            print(f"Cleaned up vector store for session {session_id}")
+        except OSError as e:
+            print(f"Error cleaning up vector store for session {session_id}: {e}")
+
 def has_vectorstore(session_id: int) -> bool:
     chroma_dir = _session_chroma_dir(session_id)
     try:
@@ -97,10 +108,12 @@ def rag_answer(question: str, session_id: int, top_k: int = TOP_K_DEFAULT) -> Tu
 
     context = "\n\n".join(context_blocks)
     prompt = (
-        "You are a precise assistant. Answer the user's question strictly using the provided CONTEXT.\n"
-        "If the answer is not present in the context, say you don't know.\n"
-        "Cite snippets as [1], [2], etc.\n\n"
-        f"CONTEXT:\n{context}\n\nQUESTION: {question}\n\nAnswer:"
+        "You are a helpful assistant. Your primary goal is to answer the user's question based on the provided CONTEXT.\n"
+        "1. First, search the CONTEXT for the answer. If you find the answer, respond with it and cite the relevant sources like [1], [2], etc.\n"
+        "2. If the answer is NOT found in the CONTEXT, you MUST state 'I don't have that information in the provided knowledge base, but I can answer using my general knowledge.' and then proceed to answer the question based on your own knowledge.\n\n"
+        f"CONTEXT:\n{context}\n\n"
+        f"QUESTION: {question}\n\n"
+        "Answer:"
     )
 
     model = genai.GenerativeModel(GEMINI_MODEL)

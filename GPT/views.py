@@ -9,8 +9,20 @@ from django.core.files.storage import FileSystemStorage
 
 from .models import ChatSession, ChatMessage
 from .gemini_service import gemini_chat
-from .rag_service import ingest_document_for_session, rag_answer
+from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session
 
+
+def _get_rag_response_with_sources(prompt, session_id):
+    """Helper to get RAG answer and conditionally append sources."""
+    answer, srcs = rag_answer(prompt, session_id)
+
+    # Only add sources if the answer doesn't contain the fallback phrase
+    # and if sources were actually found.
+    fallback_phrase = "I don't have that information in the provided knowledge base"
+    if srcs and fallback_phrase not in answer:
+        unique_srcs = sorted(list(set(s for s in srcs if s)))
+        answer += "\n\n**Sources:**\n- " + "\n- ".join(unique_srcs)
+    return answer
 
 # --- Auth Views (Maintained from original, they are functional) ---
 
@@ -86,77 +98,70 @@ def chat_view(request, session_id=None):
 
     # POST request: Handle new prompts and document uploads
     if request.method == "POST":
-        prompt = request.POST.get("prompt")
+        prompt = request.POST.get("prompt", "").strip()
         uploaded_file = request.FILES.get("document")
 
-        if not prompt:
-            messages.error(request, "Prompt cannot be empty.")
-            return redirect(request.path)
-
-        # Scenario 1: A document is uploaded.
+        # --- ACTION 1: Handle File Upload ---
+        # This block is triggered when a file is selected, thanks to the onchange event.
+        # It can also handle a prompt being submitted at the same time.
         if uploaded_file:
-            # If we are in an existing session, use it. Otherwise, create a new one.
-            if active_session:
-                session_for_rag = active_session
-                # If the session already had a document, we should clean up the old file.
-                if session_for_rag.document_path and os.path.exists(session_for_rag.document_path):
-                    try:
-                        os.remove(session_for_rag.document_path)
-                    except OSError as e:
-                        # Log the error, but don't block the user.
-                        print(f"Error deleting old file {session_for_rag.document_path}: {e}")
-            else:
-                session_for_rag = ChatSession.objects.create(user=request.user)
+            target_session = active_session or ChatSession.objects.create(user=request.user)
 
-            # Save the file securely
+            # If this session already had a document, clean up old data first.
+            if target_session.document_path:
+                if os.path.exists(target_session.document_path):
+                    try:
+                        os.remove(target_session.document_path)
+                    except OSError as e:
+                        print(f"Error deleting old file {target_session.document_path}: {e}")
+                delete_vectorstore_for_session(target_session.id)
+
+            # Save the new file
             fs = FileSystemStorage(location=settings.MEDIA_ROOT / 'user_docs')
             filename = fs.save(uploaded_file.name, uploaded_file)
             file_path = fs.path(filename)
 
-            # Update session with document info
-            session_for_rag.document_name = uploaded_file.name
-            session_for_rag.document_path = file_path
-            session_for_rag.save()
+            # Update session model with new document info
+            target_session.document_name = uploaded_file.name
+            target_session.document_path = file_path
+            target_session.save()
 
-            # Ingest the document into the vector store
+            # Ingest the new document
             try:
-                _, n_chunks = ingest_document_for_session(session_for_rag.id, file_path)
-                messages.success(request, f"✅ Successfully uploaded and indexed '{uploaded_file.name}'.")
+                _, n_chunks = ingest_document_for_session(target_session.id, file_path)
+                # If there's no prompt, it's just a file upload. Show a success message.
+                if not prompt:
+                    messages.success(request, f"✅ Ready to answer questions about '{uploaded_file.name}'.")
             except Exception as e:
                 messages.error(request, f"Error processing document: {e}")
-                session_for_rag.delete() # Clean up failed session
-                return redirect('home')
+                # Clean up what we just created
+                target_session.document_name = None
+                target_session.document_path = None
+                target_session.save()
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                # If it was a brand new session that failed, delete it.
+                if not active_session:
+                    target_session.delete()
+                return redirect(request.path)
 
-            # Save user message and get RAG response
-            ChatMessage.objects.create(session=session_for_rag, role='user', content=prompt)
-            answer, srcs = rag_answer(prompt, session_for_rag.id)
-            if srcs:
-                # Append sources for clarity in the chat
-                unique_srcs = sorted(list(set(s for s in srcs if s)))
-                answer += "\n\n**Sources:**\n- " + "\n- ".join(unique_srcs)
-            ChatMessage.objects.create(session=session_for_rag, role='assistant', content=answer)
+            # If a prompt was submitted along with the file, process it immediately.
+            if prompt:
+                ChatMessage.objects.create(session=target_session, role='user', content=prompt)
+                ai_response = _get_rag_response_with_sources(prompt, target_session.id)
+                ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
 
-            return redirect('chat_session', session_id=session_for_rag.id)
+            return redirect('chat_session', session_id=target_session.id)
 
-        # Scenario 2: No document, just a prompt. Continue existing or start new chat.
-        else:
-            target_session = active_session
-            # If on the home page (no active session), create a new one
-            if not target_session:
-                target_session = ChatSession.objects.create(user=request.user)
+        # --- ACTION 2: Handle Prompt Submission (No File Upload) ---
+        elif prompt:
+            target_session = active_session or ChatSession.objects.create(user=request.user)
 
-            # Save user message
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
-            # Check if this session is a RAG session (has a document)
             if target_session.document_path:
-                answer, srcs = rag_answer(prompt, target_session.id)
-                if srcs:
-                    unique_srcs = sorted(list(set(s for s in srcs if s)))
-                    answer += "\n\n**Sources:**\n- " + "\n- ".join(unique_srcs)
-                ai_response = answer
+                ai_response = _get_rag_response_with_sources(prompt, target_session.id)
             else:
-                # Standard Gemini chat with history
                 history = [
                     {"role": m.role, "content": m.content}
                     for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
@@ -165,6 +170,11 @@ def chat_view(request, session_id=None):
 
             ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
             return redirect('chat_session', session_id=target_session.id)
+
+        # --- ACTION 3: POST with no file and no prompt (e.g., empty form submission) ---
+        else:
+            messages.error(request, "Please enter a prompt.")
+            return redirect(request.path)
 
     # GET request: Display the chat interface
     context = {
