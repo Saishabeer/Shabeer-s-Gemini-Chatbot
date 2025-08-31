@@ -1,34 +1,34 @@
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.models import User
-from django.contrib.auth import authenticate, login
-from django.contrib import messages
-from django.contrib.auth.decorators import login_required
 import os
+import markdown2
 from django.conf import settings
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib import messages
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
+from django.core.files.storage import FileSystemStorage
 from langchain_google_genai._common import GoogleGenerativeAIError
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
-from django.core.files.storage import FileSystemStorage
+
 from .models import ChatSession, ChatMessage
 from .gemini_service import gemini_chat
 from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session, has_vectorstore
 
 
-def _get_rag_response_with_sources(prompt, session_id, history=None):
-    """Helper to get RAG answer and conditionally append sources."""
+def _process_and_format_response(prompt, session_id, history):
+    """
+    Gets a response from the appropriate service (RAG or general) and formats it.
+    This now assumes rag_answer is smart enough to return empty sources for non-doc answers.
+    """
     answer, srcs = rag_answer(prompt, session_id, history=history)
-
-    # The RAG service is instructed to prepend this tag if the answer is not from the document.
-    knowledge_tag = "[KNOWLEDGE]"
-    if answer.strip().startswith(knowledge_tag):
-        # It's a general knowledge/history answer. Remove the tag and return without sources.
-        return answer.replace(knowledge_tag, "", 1).strip()
-    elif srcs:
+    if srcs:
         # It's a document-based answer. Append the sources.
         unique_srcs = sorted(list(set(s for s in srcs if s)))
         answer += "\n\n**Sources:**\n- " + "\n- ".join(unique_srcs)
     return answer
 
-# --- Auth Views (Maintained from original, they are functional) ---
+
+# --- Auth Views ---
 
 def register(request):
     if request.method == "POST":
@@ -56,6 +56,7 @@ def register(request):
 
     return render(request, 'register.html')
 
+
 def user_login(request):
     if request.method == "POST":
         username_or_email = request.POST.get("username")
@@ -74,7 +75,7 @@ def user_login(request):
                 user_by_email = User.objects.get(email=username_or_email)
                 user = authenticate(request, username=user_by_email.username, password=password)
             except User.DoesNotExist:
-                pass # No user with that email
+                pass  # No user with that email
 
         if user is not None:
             login(request, user)
@@ -87,37 +88,37 @@ def user_login(request):
 
 
 @login_required
+def user_logout(request):
+    """Logs the current user out."""
+    logout(request)
+    messages.info(request, "You have been logged out.")
+    return redirect('login')
+
+
+@login_required
 def delete_chat_session(request, session_id):
     """Deletes a chat session and its related data."""
-    # Ensure it's a POST request for security
     if request.method == "POST":
         try:
-            # Get the session, ensuring it belongs to the current user
             session_to_delete = ChatSession.objects.get(id=session_id, user=request.user)
 
-            # --- Cleanup RAG data ---
-            # 1. Delete the vector store if it exists
+            # Cleanup RAG data
             if has_vectorstore(session_to_delete.id):
                 delete_vectorstore_for_session(session_to_delete.id)
-
-            # 2. Delete the uploaded document file
             if session_to_delete.document_path and os.path.exists(session_to_delete.document_path):
                 try:
                     os.remove(session_to_delete.document_path)
                 except OSError as e:
                     print(f"Error deleting document file {session_to_delete.document_path}: {e}")
 
-            # --- Delete the session from the database ---
             session_to_delete.delete()
             messages.success(request, "Chat session deleted successfully.")
-
         except ChatSession.DoesNotExist:
             messages.error(request, "Chat session not found.")
-
-    # Redirect to the home page after deletion or if the method is not POST
     return redirect('home')
 
-# --- Consolidated and Corrected Chat View ---
+
+# --- Main Chat View ---
 
 @login_required
 def chat_view(request, session_id=None):
@@ -125,30 +126,22 @@ def chat_view(request, session_id=None):
     chat_sessions = ChatSession.objects.filter(user=request.user).order_by("-created_at")
 
     if session_id:
-        try:
-            active_session = ChatSession.objects.get(id=session_id, user=request.user)
-        except ChatSession.DoesNotExist:
-            messages.error(request, "Chat session not found.")
-            return redirect("home")
+        active_session = get_object_or_404(ChatSession, id=session_id, user=request.user)
 
-    # POST request: Handle new prompts and document uploads
     if request.method == "POST":
         prompt = request.POST.get("prompt", "").strip()
         uploaded_file = request.FILES.get("document")
 
         # --- ACTION 1: Handle File Upload ---
-        # This block is triggered when a file is selected, thanks to the onchange event.
-        # It can also handle a prompt being submitted at the same time.
         if uploaded_file:
             target_session = active_session or ChatSession.objects.create(user=request.user)
 
             # If this session already had a document, clean up old data first.
-            if target_session.document_path:
-                if os.path.exists(target_session.document_path):
-                    try:
-                        os.remove(target_session.document_path)
-                    except OSError as e:
-                        print(f"Error deleting old file {target_session.document_path}: {e}")
+            if target_session.document_path and os.path.exists(target_session.document_path):
+                try:
+                    os.remove(target_session.document_path)
+                except OSError as e:
+                    print(f"Error deleting old file {target_session.document_path}: {e}")
                 delete_vectorstore_for_session(target_session.id)
 
             # Save the new file
@@ -156,74 +149,57 @@ def chat_view(request, session_id=None):
             filename = fs.save(uploaded_file.name, uploaded_file)
             file_path = fs.path(filename)
 
-            # Update session model with new document info
+            # Update session model
             target_session.document_name = uploaded_file.name
             target_session.document_path = file_path
             target_session.save()
 
             # Ingest the new document
             try:
-                _, n_chunks = ingest_document_for_session(target_session.id, file_path)
-                # If there's no prompt, it's just a file upload. Show a success message.
+                ingest_document_for_session(target_session.id, file_path)
                 if not prompt:
                     messages.success(request, f"✅ Ready to answer questions about '{uploaded_file.name}'.")
             except Exception as e:
                 messages.error(request, f"Error processing document: {e}")
-                # Clean up what we just created
+                # Clean up on failure
                 target_session.document_name = None
                 target_session.document_path = None
                 target_session.save()
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                # If it was a brand new session that failed, delete it.
                 if not active_session:
                     target_session.delete()
                 return redirect(request.path)
 
-            # If a prompt was submitted along with the file, process it immediately.
-            if prompt:
-                # Get history BEFORE adding the new user message
-                history = [
-                    {"role": m.role, "content": m.content}
-                    for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
-                ]
-                ChatMessage.objects.create(session=target_session, role='user', content=prompt)
-                try:
-                    ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
-                    ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
-                except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError):
-                    messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
+            # If a prompt was submitted with the file, fall through to process it
+            if not prompt:
+                return redirect('chat_session', session_id=target_session.id)
 
-            return redirect('chat_session', session_id=target_session.id)
-
-        # --- ACTION 2: Handle Prompt Submission (No File Upload) ---
-        elif prompt:
+        # --- ACTION 2: Handle Prompt Submission ---
+        if prompt:
             target_session = active_session or ChatSession.objects.create(user=request.user)
-
-            # Get history BEFORE adding the new user message
-            history = [
-                {"role": m.role, "content": m.content}
-                for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
-            ]
+            history = list(target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp").values('role', 'content'))
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
-
             try:
-                # If a document is associated with the session, always use the RAG pipeline.
-                # The RAG service itself will determine if it needs to fall back to general knowledge.
                 if target_session.document_path and has_vectorstore(target_session.id):
-                    ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
+                    ai_response = _process_and_format_response(prompt, target_session.id, history)
                 else:
-                    # Otherwise, use the standard general knowledge chat.
                     ai_response = gemini_chat(prompt, history)
 
-                ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
+                # Convert Markdown to HTML for code formatting
+                html_response = markdown2.markdown(
+                    ai_response,
+                    extras=["fenced-code-blocks", "code-friendly"]
+                )
+                ChatMessage.objects.create(session=target_session, role='assistant', content=html_response)
+
             except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError):
                 messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
 
             return redirect('chat_session', session_id=target_session.id)
 
-        # --- ACTION 3: POST with no file and no prompt (e.g., empty form submission) ---
+        # --- ACTION 3: POST with no file and no prompt ---
         else:
             messages.error(request, "Please enter a prompt.")
             return redirect(request.path)
@@ -234,6 +210,4 @@ def chat_view(request, session_id=None):
         'active_session': active_session,
         'chat_messages': active_session.messages.all() if active_session else [],
     }
-    # The original code used 'home.html' and 'chat.html'. We'll unify on 'home.html'
-    # as it seems to be the main template.
     return render(request, "home.html", context)

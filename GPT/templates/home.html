@@ -31,14 +31,18 @@
     </ul>
 
     <div class="sidebar-footer">
-      <p>{{ user.username }}</p>
-      {# Use a form for logout to send a POST request, which is more secure and required by default in Django #}
-      <form action="{% url 'logout' %}" method="post">
-        {% csrf_token %}
-        <button type="submit" style="background:none; border:none; color:#5865f2; cursor:pointer; text-decoration:underline; padding:0; font-size:inherit;">
-          Logout
-        </button>
-      </form>
+      <div class="user-info">
+        <span>{{ user.username }}</span>
+        {# Use a form for logout to send a POST request, which is more secure and required by default in Django #}
+        <form action="{% url 'logout' %}" method="post">
+          {% csrf_token %}
+          <button type="submit" class="logout-btn">Logout</button>
+        </form>
+      </div>
+      <button id="theme-toggle" class="theme-btn" aria-label="Toggle dark mode">
+        <svg id="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+        <svg id="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </button>
     </div>
   </div>
 
@@ -53,7 +57,7 @@
     <div class="message-area">
       {% for message in chat_messages %}
         <div class="message {{ message.role }}">
-          <div class="message-content">{{ message.content|linebreaksbr }}</div>
+          <div class="message-content">{{ message.content|safe }}</div>
         </div>
       {% empty %}
         <div class="welcome-message">
@@ -77,13 +81,53 @@
 </div>
 
 <script>
-  // This script ensures the message area is always scrolled to the bottom
-  // when the page loads, so you can see the latest message immediately.
   document.addEventListener('DOMContentLoaded', () => {
+    console.log("DEBUG: DOM fully loaded and parsed.");
+
+    // --- Theme Toggling Logic ---
+    const themeToggle = document.getElementById('theme-toggle');
+    console.log("DEBUG: Theme toggle button:", themeToggle); // Should show the element or null
+
+    if (themeToggle) {
+        const htmlElement = document.documentElement;
+        console.log("DEBUG: Targeting HTML element:", htmlElement);
+
+        const applyTheme = (theme) => {
+            console.log("DEBUG: Applying theme:", theme);
+            if (theme === 'dark') {
+                htmlElement.classList.add('dark-theme');
+            } else {
+                htmlElement.classList.remove('dark-theme');
+            }
+            console.log("DEBUG: HTML classes after apply:", htmlElement.className);
+        };
+
+        const savedTheme = localStorage.getItem('theme');
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const currentTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+        console.log("DEBUG: Initial theme determination:", { savedTheme, prefersDark, currentTheme });
+
+        applyTheme(currentTheme);
+
+        themeToggle.addEventListener('click', () => {
+            console.log("DEBUG: Theme toggle button clicked!");
+            const newTheme = htmlElement.classList.contains('dark-theme') ? 'light' : 'dark';
+            applyTheme(newTheme);
+            localStorage.setItem('theme', newTheme);
+        });
+    } else {
+        console.error("DEBUG: Could not find the theme toggle button with id='theme-toggle'.");
+    }
+
+    // --- Scroll to bottom logic ---
     const messageArea = document.querySelector('.message-area');
     if (messageArea) {
       messageArea.scrollTop = messageArea.scrollHeight;
     }
+    //---Syntax Highlighting ---
+    document.querySelectorAll('pre code').forEach((block) => {
+      hljs.highlightBlock(block);
+    });
   });
 </script>
 {% endblock %}
