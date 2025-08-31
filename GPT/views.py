@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 import os
 from django.conf import settings
+from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
 from django.core.files.storage import FileSystemStorage
 
 from .models import ChatSession, ChatMessage
@@ -184,8 +185,11 @@ def chat_view(request, session_id=None):
                     for m in target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp")
                 ]
                 ChatMessage.objects.create(session=target_session, role='user', content=prompt)
-                ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
-                ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
+                try:
+                    ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
+                    ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
+                except (ResourceExhausted, PermissionDenied, InvalidArgument):
+                    messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
 
             return redirect('chat_session', session_id=target_session.id)
 
@@ -200,12 +204,31 @@ def chat_view(request, session_id=None):
             ]
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
-            if target_session.document_path:
-                ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
-            else:
-                ai_response = gemini_chat(prompt, history)
+            try:
+                if target_session.document_path:
+                    # Check if the last turn was a general knowledge fallback.
+                    last_assistant_message_content = ""
+                    # Iterate backwards through history to find the last assistant message
+                    for i in range(len(history) - 1, -1, -1):
+                        if history[i].get('role') == 'assistant':
+                            last_assistant_message_content = history[i].get('content', '')
+                            break
 
-            ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
+                    fallback_phrase = "I don't have that information in the provided knowledge base"
+
+                    # If the last response was a fallback, stay in general knowledge mode.
+                    if last_assistant_message_content.strip().startswith(fallback_phrase):
+                        ai_response = gemini_chat(prompt, history)
+                    else:
+                        # Otherwise, use the RAG pipeline as normal.
+                        ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
+                else:
+                    ai_response = gemini_chat(prompt, history)
+
+                ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
+            except (ResourceExhausted, PermissionDenied, InvalidArgument):
+                messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
+
             return redirect('chat_session', session_id=target_session.id)
 
         # --- ACTION 3: POST with no file and no prompt (e.g., empty form submission) ---

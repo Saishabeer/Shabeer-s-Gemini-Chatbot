@@ -75,4 +75,15 @@
   </div>
 
 </div>
+
+<script>
+  // This script ensures the message area is always scrolled to the bottom
+  // when the page loads, so you can see the latest message immediately.
+  document.addEventListener('DOMContentLoaded', () => {
+    const messageArea = document.querySelector('.message-area');
+    if (messageArea) {
+      messageArea.scrollTop = messageArea.scrollHeight;
+    }
+  });
+</script>
 {% endblock %}

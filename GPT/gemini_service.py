@@ -1,45 +1,57 @@
 import os
+from typing import List
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-# Load .env and configure SDK
+# Import the key manager and exceptions from your RAG service
+from .rag_service import api_key_manager
+from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
+
+# Load .env
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("❌ GEMINI_API_KEY not found in .env")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Use the same environment variable as rag_service for consistency
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
-# Choose your model here (flash is faster/cheaper; pro is stronger)
-_GEMINI_MODEL = "gemini-1.5-flash"  # or "gemini-1.5-pro"
+def gemini_chat(prompt: str, history: List[dict] = None) -> str:
+    """
+    Handles general knowledge chat without RAG, with API key rotation and retry logic.
+    """
+    system_instruction = (
+        "You are a helpful and friendly conversational AI. "
+        "Answer the user's question clearly and concisely."
+    )
 
-def _to_gemini_messages(history_list, user_prompt):
-    """
-    Convert our history + current prompt into Gemini's expected format.
-    history_list: [{"role": "user"|"assistant", "content": "..."}, ...]
-    """
-    msgs = []
-    for m in history_list or []:
-        role = "model" if m.get("role") == "assistant" else "user"
-        msgs.append({"role": role, "parts": [m.get("content", "")]})
-    # Append current prompt as a new user turn
-    if user_prompt:
-        msgs.append({"role": "user", "parts": [user_prompt]})
-    return msgs
+    # This loop will retry with the next API key if the current one is exhausted or invalid.
+    for _ in range(len(api_key_manager.keys)):
+        try:
+            # Configure the library with the current key for this attempt
+            current_key = api_key_manager.get_current_key()
+            genai.configure(api_key=current_key)
 
-def gemini_chat(prompt, history=None):
-    """
-    Generate a reply from Gemini given current prompt and prior history.
-    - prompt: str (current user input)
-    - history: list of dicts with keys: role ('user'|'assistant') and content (str)
-    Returns: str (model reply text)
-    """
-    try:
-        messages = _to_gemini_messages(history or [], prompt)
-        model = genai.GenerativeModel(_GEMINI_MODEL)
-        resp = model.generate_content(messages)
-        # response.text is convenient; handle empty gracefully
-        return (resp.text or "").strip() if hasattr(resp, "text") else ""
-    except Exception as e:
-        # Surface a readable error back to UI
-        return f"⚠️ Error contacting Gemini: {str(e)}"
+            model = genai.GenerativeModel(
+                model_name=GEMINI_MODEL,
+                system_instruction=system_instruction
+            )
+
+            # Convert our history list to Gemini's format
+            gemini_history = []
+            for m in history or []:
+                role = "model" if m.get("role") == "assistant" else "user"
+                gemini_history.append({"role": role, "parts": [m.get("content", "")]})
+
+            chat = model.start_chat(history=gemini_history)
+            resp = chat.send_message(prompt)
+
+            return (getattr(resp, "text", "") or "").strip() # Success!
+
+        except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
+            print(f"WARNING: API key ending in '...{api_key_manager.get_current_key()[-4:]}' failed during general chat. Reason: {type(e).__name__}")
+            can_switch = api_key_manager.switch_to_next_key()
+            if not can_switch:
+                print("ERROR: All available API keys are invalid or have reached their quota.")
+                raise e # Re-raise the exception to be handled by the view
+            print("INFO: Switching to the next API key for general chat.")
+
+    # This part is reached if all keys fail
+    raise ResourceExhausted("All available API keys failed during general chat.")
