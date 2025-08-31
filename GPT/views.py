@@ -8,7 +8,6 @@ from django.conf import settings
 from langchain_google_genai._common import GoogleGenerativeAIError
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
 from django.core.files.storage import FileSystemStorage
-
 from .models import ChatSession, ChatMessage
 from .gemini_service import gemini_chat
 from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session, has_vectorstore
