@@ -6,6 +6,7 @@ from django.conf import settings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain_chroma import Chroma
+from langchain_google_genai._common import GoogleGenerativeAIError
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
 
@@ -15,14 +16,19 @@ from dotenv import load_dotenv
 # --- Load .env and configure Gemini ---
 load_dotenv()
 
+
 # --- API Key Rotation Manager ---
 class ApiKeyManager:
     """Manages a pool of API keys, rotating them when one is exhausted."""
+
     def __init__(self):
         keys_str = os.getenv("GEMINI_API_KEYS")
         if not keys_str:
             raise ValueError("GEMINI_API_KEYS not found in .env. Please provide a comma-separated list of keys.")
         self.keys = [key.strip() for key in keys_str.split(',') if key.strip()]
+        if not self.keys:
+            raise ValueError(
+                "GEMINI_API_KEYS was found but contained no valid keys after parsing. Please check your .env file.")
         self.current_index = 0
         print(f"INFO: Loaded {len(self.keys)} API keys for rotation.")
 
@@ -36,6 +42,7 @@ class ApiKeyManager:
         # A return value of False indicates we've tried every key once in this cycle.
         return self.current_index != 0
 
+
 # Create a single instance of the manager for the application
 api_key_manager = ApiKeyManager()
 
@@ -46,12 +53,14 @@ CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "250"))
 TOP_K_DEFAULT = int(os.getenv("RAG_TOP_K", "5"))
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
+
 # --- Utilities ---
 def _session_chroma_dir(session_id: int) -> str:
     base = str(getattr(settings, "CHROMA_DIR", settings.BASE_DIR / "chroma"))
     path = os.path.join(base, f"session_{session_id}")
     os.makedirs(path, exist_ok=True)
     return path
+
 
 def _load_documents(file_path: str):
     ext = os.path.splitext(file_path)[1].lower()
@@ -65,8 +74,10 @@ def _load_documents(file_path: str):
         raise ValueError(f"Unsupported file type: {ext} (use PDF/DOCX/TXT)")
     return loader.load()
 
+
 def _get_embeddings():
     return GoogleGenerativeAIEmbeddings(model=EMBED_MODEL, google_api_key=api_key_manager.get_current_key())
+
 
 # --- Ingestion: split + embed + persist in Chroma ---
 def ingest_document_for_session(session_id: int, file_path: str) -> Tuple[str, int]:
@@ -93,18 +104,20 @@ def ingest_document_for_session(session_id: int, file_path: str) -> Tuple[str, i
                 persist_directory=chroma_dir,
             )
 
-            return chroma_dir, len(chunks) # Success!
+            return chroma_dir, len(chunks)  # Success!
 
-        except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
-            print(f"WARNING: API key ending in '...{api_key_manager.get_current_key()[-4:]}' failed during ingestion. Reason: {type(e).__name__}")
+        except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
+            print(
+                f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during ingestion. Reason: {type(e).__name__}")
             can_switch = api_key_manager.switch_to_next_key()
             if not can_switch:
                 print("ERROR: All available API keys are invalid or have reached their quota.")
-                raise e # Re-raise the exception to be handled by the view
+                raise e  # Re-raise the exception to be handled by the view
             print("INFO: Switching to the next API key for ingestion.")
 
     # This part is reached if all keys fail
     raise ResourceExhausted("All available API keys failed during document ingestion.")
+
 
 def delete_vectorstore_for_session(session_id: int):
     """Deletes the entire ChromaDB directory for a given session to allow for re-indexing."""
@@ -116,6 +129,7 @@ def delete_vectorstore_for_session(session_id: int):
         except OSError as e:
             print(f"Error cleaning up vector store for session {session_id}: {e}")
 
+
 def has_vectorstore(session_id: int) -> bool:
     chroma_dir = _session_chroma_dir(session_id)
     try:
@@ -123,14 +137,17 @@ def has_vectorstore(session_id: int) -> bool:
     except FileNotFoundError:
         return False
 
+
 def _get_vectordb(session_id: int):
     return Chroma(
         embedding_function=_get_embeddings(),
         persist_directory=_session_chroma_dir(session_id)
     )
 
+
 # --- Retrieval + Gemini generation ---
-def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k: int = TOP_K_DEFAULT) -> Tuple[str, List[str]]:
+def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k: int = TOP_K_DEFAULT) -> Tuple[
+    str, List[str]]:
     # This loop will retry the request with the next API key if the current one is exhausted.
     for _ in range(len(api_key_manager.keys)):
         try:
@@ -147,17 +164,19 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
                 meta = d.metadata or {}
                 src = meta.get("source", "uploaded document")
                 page = meta.get("page")
-                label = f"{os.path.basename(src)}" + (f" • p.{page+1}" if isinstance(page, int) else "")
+                label = f"{os.path.basename(src)}" + (f" • p.{page + 1}" if isinstance(page, int) else "")
                 context_blocks.append(f"[{i}] {d.page_content}")
                 sources.append(label)
 
             context = "\n\n".join(context_blocks)
-            
+
             system_instruction = (
-                "You are a helpful assistant. Your primary goal is to answer the user's question based *exclusively* on the provided CONTEXT.\n"
-                "1. Read the user's QUESTION and the chat HISTORY to understand the full query.\n"
-                "2. Examine the CONTEXT provided. If the CONTEXT contains enough information to fully and directly answer the user's question, then generate a comprehensive answer based *only* on the CONTEXT and cite the sources like [1], [2], etc.\n"
-                "3. If the CONTEXT does *not* contain enough information to answer the question, you MUST start your response with the exact phrase 'I don't have that information in the provided knowledge base, but I can answer using my general knowledge.' and then proceed to answer the question using your own general knowledge.\n\n"
+                "You are a helpful assistant. Your response MUST be in two parts, separated by '---'.\n"
+                "Part 1: State the source of your answer. It must be one of: `SOURCE: DOCUMENT` or `SOURCE: KNOWLEDGE`.\n"
+                "Part 2: Provide the answer to the user's question.\n\n"
+                "INSTRUCTIONS:\n"
+                "1. Examine the DOCUMENT CONTEXT. If it contains the answer, your first line MUST be `SOURCE: DOCUMENT`. Then, after '---', provide the answer, citing sources like [1], [2], etc.\n"
+                "2. If the answer is NOT in the DOCUMENT CONTEXT, but you know it from chat HISTORY or general knowledge, your first line MUST be `SOURCE: KNOWLEDGE`. Then, after '---', provide the answer without any sources.\n\n"
                 f"CONTEXT:\n{context}\n\n"
             )
 
@@ -171,20 +190,34 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
                 model_name=GEMINI_MODEL,
                 system_instruction=system_instruction
             )
-            
+
             # Start a chat session with the history and send the new question
             chat = model.start_chat(history=gemini_history)
             resp = chat.send_message(question)
 
-            answer = (getattr(resp, "text", "") or "").strip()
-            return answer, sources # Success! Exit the function.
+            raw_answer = (getattr(resp, "text", "") or "").strip()
 
-        except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
-            print(f"WARNING: API key ending in '...{api_key_manager.get_current_key()[-4:]}' failed during RAG. Reason: {type(e).__name__}")
+            # Parse the structured response to determine the true source
+            answer_parts = raw_answer.split('---', 1)
+            if len(answer_parts) == 2 and "SOURCE:" in answer_parts[0]:
+                header, final_answer = answer_parts[0].strip(), answer_parts[1].strip()
+                if header == "SOURCE: DOCUMENT":
+                    # Model claims it used the document, so we return the sources.
+                    return final_answer, sources
+                else:  # "SOURCE: KNOWLEDGE"
+                    # Model claims it used its own knowledge, so we discard the sources.
+                    return final_answer, []
+            else:
+                # Fallback if the model doesn't follow the structured format.
+                # We return the raw answer and discard the sources to be safe and avoid false citations.
+                return raw_answer, []
+
+        except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
+            print(f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during RAG. Reason: {type(e).__name__}")
             can_switch = api_key_manager.switch_to_next_key()
             if not can_switch:
                 print("ERROR: All available API keys are invalid or have reached their quota.")
-                raise e # Re-raise the exception to be handled by the view
+                raise e  # Re-raise the exception to be handled by the view
             print("INFO: Switching to the next API key for RAG answer.")
 
     # This part should not be reached unless something went wrong, but it's a safe fallback.

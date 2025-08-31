@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 import os
 from django.conf import settings
+from langchain_google_genai._common import GoogleGenerativeAIError
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
 from django.core.files.storage import FileSystemStorage
 
@@ -17,10 +18,13 @@ def _get_rag_response_with_sources(prompt, session_id, history=None):
     """Helper to get RAG answer and conditionally append sources."""
     answer, srcs = rag_answer(prompt, session_id, history=history)
 
-    # Only add sources if the answer doesn't contain the fallback phrase
-    # and if sources were actually found.
-    fallback_phrase = "I don't have that information in the provided knowledge base"
-    if srcs and fallback_phrase not in answer:
+    # The RAG service is instructed to prepend this tag if the answer is not from the document.
+    knowledge_tag = "[KNOWLEDGE]"
+    if answer.strip().startswith(knowledge_tag):
+        # It's a general knowledge/history answer. Remove the tag and return without sources.
+        return answer.replace(knowledge_tag, "", 1).strip()
+    elif srcs:
+        # It's a document-based answer. Append the sources.
         unique_srcs = sorted(list(set(s for s in srcs if s)))
         answer += "\n\n**Sources:**\n- " + "\n- ".join(unique_srcs)
     return answer
@@ -188,7 +192,7 @@ def chat_view(request, session_id=None):
                 try:
                     ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
                     ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
-                except (ResourceExhausted, PermissionDenied, InvalidArgument):
+                except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError):
                     messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
 
             return redirect('chat_session', session_id=target_session.id)
@@ -204,29 +208,18 @@ def chat_view(request, session_id=None):
             ]
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
+
             try:
-                if target_session.document_path:
-                    # Check if the last turn was a general knowledge fallback.
-                    last_assistant_message_content = ""
-                    # Iterate backwards through history to find the last assistant message
-                    for i in range(len(history) - 1, -1, -1):
-                        if history[i].get('role') == 'assistant':
-                            last_assistant_message_content = history[i].get('content', '')
-                            break
-
-                    fallback_phrase = "I don't have that information in the provided knowledge base"
-
-                    # If the last response was a fallback, stay in general knowledge mode.
-                    if last_assistant_message_content.strip().startswith(fallback_phrase):
-                        ai_response = gemini_chat(prompt, history)
-                    else:
-                        # Otherwise, use the RAG pipeline as normal.
-                        ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
+                # If a document is associated with the session, always use the RAG pipeline.
+                # The RAG service itself will determine if it needs to fall back to general knowledge.
+                if target_session.document_path and has_vectorstore(target_session.id):
+                    ai_response = _get_rag_response_with_sources(prompt, target_session.id, history=history)
                 else:
+                    # Otherwise, use the standard general knowledge chat.
                     ai_response = gemini_chat(prompt, history)
 
                 ChatMessage.objects.create(session=target_session, role='assistant', content=ai_response)
-            except (ResourceExhausted, PermissionDenied, InvalidArgument):
+            except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError):
                 messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
 
             return redirect('chat_session', session_id=target_session.id)

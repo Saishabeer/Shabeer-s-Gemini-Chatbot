@@ -2,6 +2,7 @@ import os
 from typing import List
 from dotenv import load_dotenv
 import google.generativeai as genai
+from langchain_google_genai._common import GoogleGenerativeAIError
 
 # Import the key manager and exceptions from your RAG service
 from .rag_service import api_key_manager
@@ -45,8 +46,9 @@ def gemini_chat(prompt: str, history: List[dict] = None) -> str:
 
             return (getattr(resp, "text", "") or "").strip() # Success!
 
-        except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
-            print(f"WARNING: API key ending in '...{api_key_manager.get_current_key()[-4:]}' failed during general chat. Reason: {type(e).__name__}")
+
+        except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
+            print(f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during general chat. Reason: {type(e).__name__}")
             can_switch = api_key_manager.switch_to_next_key()
             if not can_switch:
                 print("ERROR: All available API keys are invalid or have reached their quota.")
