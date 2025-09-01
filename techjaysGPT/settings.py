@@ -81,9 +81,18 @@ WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
+    # Using SQLite for local development is fine, but for any deployment or
+    # multi-user testing, PostgreSQL is strongly recommended for its robustness
+    # and ability to handle concurrent writes without locking issues.
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # Switch from SQLite to PostgreSQL.
+        # You'll need to install the driver: pip install psycopg2-binary
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'techjays_gpt_db',  # The name of your database in PostgreSQL
+        'USER': 'postgres',      # Your PostgreSQL username
+        'PASSWORD': '1910', # Your PostgreSQL password
+        'HOST': 'localhost',        # Or the IP of your database server
+        'PORT': '5432',             # Default PostgreSQL port
     }
 }
 

@@ -1,5 +1,5 @@
 from typing import List, Dict
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 
 class WebSearchManager:

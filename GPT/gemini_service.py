@@ -18,50 +18,15 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 def _should_search_web(prompt: str) -> bool:
     """
-    Uses the LLM to quickly decide if a web search is necessary for a given prompt.
-    This avoids unnecessary web searches for simple conversational questions.
+    Uses heuristics to decide if a web search is necessary for a given prompt.
     """
-    # --- Heuristic Improvement ---
-    # Check for common conversational patterns to avoid an unnecessary LLM call.
-    # This is more robust than just checking the length.
     prompt_lower = prompt.lower().strip()
     conversational_starters = ('hi', 'hello', 'hey', 'my name is', 'what is my name', 'thank you', 'thanks', "what's my name")
-    if prompt_lower.startswith(conversational_starters):
-        print(f"INFO: Skipping web search for conversational prompt: '{prompt}'")
+    if prompt_lower.startswith(conversational_starters) or len(prompt.split()) < 3:
+        print(f"INFO: Skipping web search for simple/conversational prompt: '{prompt}'")
         return False
-
-    try:
-        # Use a simple, constrained prompt for the decision-making.
-        router_model = genai.GenerativeModel(GEMINI_MODEL)
-
-        router_prompt = (
-            "You are an intelligent search query classifier. Your task is to determine if a user's query "
-            "requires a real-time web search to be answered accurately. "
-            "Answer with only a single word: 'YES' or 'NO'.\n\n"
-            "== Reasons to say YES (search the web) ==\n"
-            "1. The query is about recent events, news, or current affairs (e.g., 'latest movie releases', 'today's weather').\n"
-            "2. The query asks for specific, factual information about a person, place, or thing that might have recent updates (e.g., 'who is the CEO of OpenAI?', 'what is Thalapathy Vijay's upcoming movie?').\n"
-            "3. The query asks for code or technical instructions involving a **specific, named library, framework, or API** (e.g., 'how to use pandas read_csv', 'django authentication example', 'google maps api key setup').\n\n"
-            "== Reasons to say NO (do NOT search the web) ==\n"
-            "1. The query is a simple greeting, conversational filler, or a personal question (e.g., 'hi', 'how are you?', 'what is my name?').\n"
-            "2. The query is a **general programming or algorithmic question** that does not require knowledge of a specific, named library (e.g., 'write a python function to find duplicates', 'how does bubble sort work?', 'javascript for loop syntax').\n"
-            "3. The query is a broad, philosophical, or creative request (e.g., 'what is the meaning of life?', 'write a poem about the sea').\n\n"
-            f"User Query: \"{prompt}\"\n\n"
-            "Requires Web Search? (YES/NO):"
-        )
-
-        response = router_model.generate_content(router_prompt)
-        decision = (getattr(response, "text", "") or "").strip().upper()
-
-        print(f"INFO: Web search router decision for '{prompt}': {decision}")
-
-        return "YES" in decision
-
-    except Exception as e:
-        # If the router fails for any reason, it's safer to default to not searching to save resources.
-        print(f"WARNING: Web search router failed: {e}. Defaulting to NO search.")
-        return False
-
+    
+    return True
 
 def gemini_chat(prompt: str, history: List[dict] = None) -> Tuple[str, List[str]]:
     """

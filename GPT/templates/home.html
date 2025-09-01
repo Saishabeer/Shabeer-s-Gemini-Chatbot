@@ -82,41 +82,29 @@
 
 <script>
   document.addEventListener('DOMContentLoaded', () => {
-    console.log("DEBUG: DOM fully loaded and parsed.");
-
     // --- Theme Toggling Logic ---
     const themeToggle = document.getElementById('theme-toggle');
-    console.log("DEBUG: Theme toggle button:", themeToggle); // Should show the element or null
-
     if (themeToggle) {
         const htmlElement = document.documentElement;
-        console.log("DEBUG: Targeting HTML element:", htmlElement);
-
         const applyTheme = (theme) => {
-            console.log("DEBUG: Applying theme:", theme);
             if (theme === 'dark') {
                 htmlElement.classList.add('dark-theme');
             } else {
                 htmlElement.classList.remove('dark-theme');
             }
-            console.log("DEBUG: HTML classes after apply:", htmlElement.className);
         };
 
         const savedTheme = localStorage.getItem('theme');
         const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         const currentTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-        console.log("DEBUG: Initial theme determination:", { savedTheme, prefersDark, currentTheme });
-
+        
         applyTheme(currentTheme);
 
         themeToggle.addEventListener('click', () => {
-            console.log("DEBUG: Theme toggle button clicked!");
             const newTheme = htmlElement.classList.contains('dark-theme') ? 'light' : 'dark';
             applyTheme(newTheme);
             localStorage.setItem('theme', newTheme);
         });
-    } else {
-        console.error("DEBUG: Could not find the theme toggle button with id='theme-toggle'.");
     }
 
     // --- Scroll to bottom logic ---
@@ -124,6 +112,7 @@
     if (messageArea) {
       messageArea.scrollTop = messageArea.scrollHeight;
     }
+    
     //---Syntax Highlighting ---
     document.querySelectorAll('pre code').forEach((block) => {
       hljs.highlightBlock(block);

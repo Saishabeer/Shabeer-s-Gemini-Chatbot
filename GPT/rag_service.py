@@ -6,7 +6,6 @@ from django.conf import settings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain_chroma import Chroma
-from langchain_google_genai._common import GoogleGenerativeAIError
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
 
@@ -107,7 +106,7 @@ def ingest_document_for_session(session_id: int, file_path: str) -> Tuple[str, i
 
             return chroma_dir, len(chunks)  # Success!
 
-        except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
+        except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
             print(
                 f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during ingestion. Reason: {type(e).__name__}")
             can_switch = api_key_manager.switch_to_next_key()
@@ -239,7 +238,7 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
 
             return final_answer, sources_to_return
 
-        except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
+        except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
             print(f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during RAG. Reason: {type(e).__name__}")
             can_switch = api_key_manager.switch_to_next_key()
             if not can_switch:
