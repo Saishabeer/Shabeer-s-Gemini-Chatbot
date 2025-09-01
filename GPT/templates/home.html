@@ -6,13 +6,13 @@
 {% block content %}
 <div class="chat-layout">
   <!-- Sidebar -->
-  <div class="sidebar">
-    <div class="sidebar-header">
+  <aside class="sidebar">
+    <header class="sidebar-header">
       <img src="{% static 'images/logo.png' %}" alt="Logo" class="sidebar-logo">
       <h2>Shabeer's Chatbot</h2>
-    </div>
+    </header>
 
-    <a href="{% url 'home' %}" class="new-chat-btn">+ New Chat</a>
+    <a href="{% url 'home' %}" class="new-chat-btn">✨ New Chat</a>
 
     <ul class="chat-list">
       {% for session in chat_sessions %}
@@ -30,7 +30,7 @@
       {% endfor %}
     </ul>
 
-    <div class="sidebar-footer">
+    <footer class="sidebar-footer">
       <div class="user-info">
         <span>{{ user.username }}</span>
         {# Use a form for logout to send a POST request, which is more secure and required by default in Django #}
@@ -43,10 +43,10 @@
         <svg id="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
         <svg id="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </button>
-    </div>
-  </div>
+    </footer>
+  </aside>
 
-  <div class="chat-window">
+  <main class="chat-window">
     <div style="padding: 10px 20px 0;">
     {% if messages %}
       {% for message in messages %}
@@ -54,7 +54,7 @@
       {% endfor %}
     {% endif %}
     </div>
-    <div class="message-area">
+    <div class="message-area" role="log" aria-live="polite">
       {% for message in chat_messages %}
         <div class="message {{ message.role }}">
           {# We output the raw markdown here. The JS will render it for consistency. #}
@@ -62,213 +62,29 @@
         </div>
       {% empty %}
         <div class="welcome-message">
-          <h2>Welcome to Shabeer's Chatbot!</h2>
+          <h2>Welcome to Shabeer's Chatbot! 👋</h2>
           <p>Start a new conversation by typing below.</p>
         </div>
       {% endfor %}
     </div>
 
-    <form class="prompt-form" method="POST" enctype="multipart/form-data" action="{% if active_session %}{% url 'chat_session' active_session.id %}{% else %}{% url 'home' %}{% endif %}">
+    <form class="prompt-form"
+          method="POST"
+          enctype="multipart/form-data"
+          action="{% if active_session %}{% url 'chat_session' active_session.id %}{% else %}{% url 'home' %}{% endif %}"
+          data-chat-url-template="{% url 'chat_session' 99999999 %}"
+          data-delete-url-template="{% url 'delete_chat_session' 99999999 %}">
       {% csrf_token %}
       <label for="file-upload" class="file-upload-btn" title="Attach document">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
       </label>
       <input id="file-upload" type="file" name="document" style="display: none;" onchange="this.form.submit()">
       <input type="text" name="prompt" placeholder="Ask anything..." autocomplete="off" autofocus>
-      <button type="submit">Send</button>
+      <button type="submit">Send ➤</button>
     </form>
-  </div>
+  </main>
 
 </div>
 
-<script>
-  document.addEventListener('DOMContentLoaded', (event) => {
-    const messageArea = document.querySelector('.message-area');
-    const promptForm = document.querySelector('.prompt-form');
-    const promptInput = promptForm.querySelector('input[name="prompt"]');
-    const sendButton = promptForm.querySelector('button[type="submit"]');
-
-    // --- Theme Toggling Logic ---
-    const themeToggle = document.getElementById('theme-toggle');
-    if (themeToggle) {
-        const htmlElement = document.documentElement;
-        const applyTheme = (theme) => {
-            htmlElement.classList.toggle('dark-theme', theme === 'dark');
-        };
-
-        const savedTheme = localStorage.getItem('theme');
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const currentTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-
-        applyTheme(currentTheme);
-
-        themeToggle.addEventListener('click', () => {
-            const newTheme = htmlElement.classList.contains('dark-theme') ? 'light' : 'dark';
-            applyTheme(newTheme);
-            localStorage.setItem('theme', newTheme);
-        });
-    }
-
-    // --- Helper Functions ---
-    const scrollToBottom = () => {
-        if (messageArea) {
-            messageArea.scrollTop = messageArea.scrollHeight;
-        }
-    };
-
-    const renderContent = (element) => {
-        const rawMarkdown = element.textContent || '';
-        if (!rawMarkdown.trim()) {
-            element.textContent = 'Sorry, I couldn\'t generate a response.';
-            return;
-        }
-        if (typeof marked !== 'undefined') {
-            element.innerHTML = marked.parse(rawMarkdown);
-        } else {
-            console.error("marked.js is not loaded. Cannot render markdown.");
-            element.innerHTML = rawMarkdown.replace(/\n/g, '<br>');
-        }
-        if (typeof hljs !== 'undefined') {
-            element.querySelectorAll('pre code').forEach((block) => {
-                hljs.highlightBlock(block);
-            });
-        }
-    };
-
-    // --- Initial Page Load ---
-    document.querySelectorAll('.message.assistant .message-content').forEach(renderContent);
-    scrollToBottom();
-
-    // --- Handle Form Submission (AJAX for Streaming) ---
-    promptForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const promptText = promptInput.value.trim();
-        if (!promptText) return;
-
-        // 1. Display User Message
-        const welcomeMessage = document.querySelector('.welcome-message');
-        if (welcomeMessage) welcomeMessage.remove();
-
-        const userMessage = document.createElement('div');
-        userMessage.className = 'message user';
-        const userContent = document.createElement('div');
-        userContent.className = 'message-content';
-        userContent.textContent = promptText;
-        userMessage.appendChild(userContent);
-        messageArea.appendChild(userMessage);
-        scrollToBottom();
-
-        // 2. Prepare Assistant's Message Bubble
-        const assistantMessage = document.createElement('div');
-        assistantMessage.className = 'message assistant';
-        const assistantContent = document.createElement('div');
-        assistantContent.className = 'message-content';
-        assistantContent.innerHTML = '<span class="thinking-indicator"></span>';
-        assistantMessage.appendChild(assistantContent);
-        messageArea.appendChild(assistantMessage);
-        scrollToBottom();
-
-        // 3. Disable Form and Clear Input
-        const formData = new FormData(promptForm);
-        promptInput.value = '';
-        promptInput.disabled = true;
-        sendButton.disabled = true;
-
-        // 4. Fetch and Process Stream
-        try {
-            const response = await fetch(promptForm.action, {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': promptForm.querySelector('input[name="csrfmiddlewaretoken"]').value,
-                },
-                body: formData
-            });
-
-            if (!response.ok) {
-                throw new Error(`Server responded with status: ${response.status}`);
-            }
-
-            // *** THIS IS THE CRITICAL NEW LOGIC ***
-            // Check for the custom header and update the URL if a new session was created.
-            const newSessionId = response.headers.get('X-Chat-Session-Id');
-            if (newSessionId) {
-                const newUrl = `/chat/${newSessionId}/`;
-                // Update the browser's URL bar without reloading the page.
-                window.history.pushState({path: newUrl}, '', newUrl);
-                // Update the form's action target for all subsequent messages.
-                promptForm.action = newUrl;
-                console.log(`New chat session created. URL updated to: ${newUrl}`);
-
-                // --- Dynamically update the sidebar ---
-                const chatList = document.querySelector('.chat-list');
-                const noChatsMessage = chatList.querySelector('li[style*="color: #888"]');
-                const csrfToken = promptForm.querySelector('input[name="csrfmiddlewaretoken"]').value;
-
-                // 1. Remove "No chats yet" message if it exists
-                if (noChatsMessage) {
-                    noChatsMessage.remove();
-                }
-
-                // 2. Deactivate any currently active chat item
-                const currentActive = chatList.querySelector('.chat-list-item.active');
-                if (currentActive) {
-                    currentActive.classList.remove('active');
-                }
-
-                // 3. Create the new list item element
-                const newChatItem = document.createElement('li');
-                newChatItem.className = 'chat-list-item active';
-
-                // 4. Create the link and the delete form using innerHTML for simplicity
-                const newChatTitle = promptText.length > 30 ? promptText.substring(0, 30) + '...' : promptText;
-                newChatItem.innerHTML = `
-                    <a href="${newUrl}">${newChatTitle}</a>
-                    <form action="/chat/delete/${newSessionId}/" method="post" class="delete-chat-form">
-                        <input type="hidden" name="csrfmiddlewaretoken" value="${csrfToken}">
-                        <button type="submit" title="Delete chat" onclick="return confirm('Are you sure you want to delete this chat?');">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                        </button>
-                    </form>
-                `;
-
-                // 5. Add the new item to the top of the list
-                chatList.prepend(newChatItem);
-            }
-            // *** END OF NEW LOGIC ***
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let firstChunk = true;
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                if (firstChunk) {
-                    assistantContent.innerHTML = ''; // Clear the thinking indicator
-                    firstChunk = false;
-                }
-
-                const textChunk = decoder.decode(value, { stream: true });
-                assistantContent.textContent += textChunk;
-                scrollToBottom();
-            }
-
-        } catch (error) {
-            console.error('Streaming or request failed:', error);
-            assistantContent.textContent = 'Sorry, an error occurred while getting the response.';
-        } finally {
-            // Final render of the complete message with markdown
-            renderContent(assistantContent);
-
-            // Re-enable form
-            promptInput.disabled = false;
-            sendButton.disabled = false;
-            promptInput.focus();
-            scrollToBottom();
-        }
-    });
-  });
-</script>
+<script src="{% static 'js/chat.js' %}"></script>
 {% endblock %}

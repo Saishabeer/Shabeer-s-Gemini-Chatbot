@@ -1,158 +1,104 @@
-import os
 import logging
 import shutil
-from typing import List, Tuple, Iterable
+from pathlib import Path
+from typing import List
 
-import google.generativeai as genai
 from django.conf import settings
-from dotenv import load_dotenv
-from google.api_core.exceptions import InvalidArgument, PermissionDenied, ResourceExhausted
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
-from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
+from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from .utils import api_key_manager, with_api_key_rotation
-from .web_search_service import web_search_manager
 
-# --- Basic Setup ---
 logger = logging.getLogger(__name__)
-load_dotenv()
-EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "models/embedding-001")
-CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1200"))
-CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "250"))
-TOP_K_DEFAULT = int(os.getenv("RAG_TOP_K", "5"))
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 
-# --- Utilities ---
-def _session_chroma_dir(session_id: int) -> str:
-    base = str(getattr(settings, "CHROMA_DIR", settings.BASE_DIR / "chroma"))
-    path = os.path.join(base, f"session_{session_id}")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _load_documents(file_path: str):
-    ext = os.path.splitext(file_path)[1].lower()
-    logger.info(f"Loading document with extension: {ext}")
-    if ext == ".pdf":
-        loader = PyPDFLoader(file_path)
-    elif ext in (".txt", ".md", ".log"):
-        loader = TextLoader(file_path, autodetect_encoding=True)
-    elif ext == ".docx":
-        loader = Docx2txtLoader(file_path)
-    else:
-        raise ValueError(f"Unsupported file type: {ext} (use PDF/DOCX/TXT)")
-    return loader.load()
-
-
-def _get_embeddings():
-    return GoogleGenerativeAIEmbeddings(model=EMBED_MODEL, google_api_key=api_key_manager.get_current_key())
-
-
-# --- Core RAG Service Functions ---
-@with_api_key_rotation
-def ingest_document_for_session(session_id: int, file_path: str) -> Tuple[str, int]:
-    logger.info(f"[RAG] Starting ingestion for session {session_id}, file: {file_path}")
-    docs = _load_documents(file_path)
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-    )
-    chunks = splitter.split_documents(docs)
-    logger.info(f"[RAG] Document split into {len(chunks)} chunks.")
-    chroma_dir = _session_chroma_dir(session_id)
-
-    embeddings = _get_embeddings()
-    Chroma.from_documents(documents=chunks, embedding=embeddings, persist_directory=chroma_dir)
-    logger.info(f"[RAG] Ingestion complete. Vector store created at {chroma_dir} with {len(chunks)} chunks.")
-    return chroma_dir, len(chunks)
-
-
-def delete_vectorstore_for_session(session_id: int):
-    """Deletes the ChromaDB directory for a session."""
-    chroma_dir = _session_chroma_dir(session_id)
-    if os.path.exists(chroma_dir):
-        try:
-            shutil.rmtree(chroma_dir)
-            logger.info(f"Cleaned up vector store for session {session_id}")
-        except OSError as e:
-            logger.error(f"Error cleaning up vector store for session {session_id}: {e}")
+def get_gemini_embeddings():
+    """Initializes and returns the GoogleGenerativeAIEmbeddings instance using the current API key."""
+    return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key_manager.get_current_key())
 
 
 def has_vectorstore(session_id: int) -> bool:
-    chroma_dir = _session_chroma_dir(session_id)
-    try:
-        return any(os.scandir(chroma_dir))
-    except FileNotFoundError:
-        return False
+    """Checks if a vector store directory exists for the given session."""
+    vectorstore_path = settings.CHROMA_DIR / f"session_{session_id}"
+    return vectorstore_path.exists() and any(vectorstore_path.iterdir())
 
 
-def _get_vectordb(session_id: int):
-    return Chroma(embedding_function=_get_embeddings(), persist_directory=_session_chroma_dir(session_id))
+def delete_vectorstore_for_session(session_id: int):
+    """Deletes the Chroma vector store directory for a given session."""
+    if has_vectorstore(session_id):
+        vectorstore_path = settings.CHROMA_DIR / f"session_{session_id}"
+        try:
+            shutil.rmtree(vectorstore_path)
+            logger.info(f"Successfully deleted vector store for session {session_id}.")
+        except OSError as e:
+            logger.error(f"Error deleting vector store for session {session_id}: {e}", exc_info=True)
 
 
 @with_api_key_rotation
-def rag_answer_stream(question: str, session_id: int, history: List[dict] = None, top_k: int = TOP_K_DEFAULT) -> \
-    Iterable[str]:
-    logger.info(f"-- RAG Pipeline (Stream) Initiated for Session {session_id} --")
-    logger.info(f"User prompt: '{question}'")
+def ingest_document_for_session(session_id: int, file_path: str):
+    """
+    Loads a document, splits it into chunks, generates embeddings,
+    and stores them in a persistent Chroma vector store for a specific session.
+    """
+    full_file_path = settings.MEDIA_ROOT / file_path
+    vectorstore_path = str(settings.CHROMA_DIR / f"session_{session_id}")
 
-    current_key = api_key_manager.get_current_key()
-    genai.configure(api_key=current_key)
-
-    # 1. Document Retrieval (Happens before streaming)
-    logger.info(f"Step 1: Retrieving top {top_k} document chunks from knowledge base for streaming.")
-    vectordb = _get_vectordb(session_id)
-    docs = vectordb.similarity_search(question, k=top_k)
-    doc_context = "\n\n".join([f"[{i + 1}] {d.page_content}" for i, d in enumerate(docs)])
-    doc_sources = [os.path.basename(d.metadata.get("source", "")) for d in docs]
-    logger.info(f"Retrieved {len(docs)} chunks. Sources: {doc_sources}")
-
-    # 2. Web Search (Happens before streaming)
-    web_context, web_sources = "", []
-    if web_search_manager.is_enabled():
-        logger.info(f"Step 2: Performing web search for query: '{question}'")
-        search_results = web_search_manager.search(question)
-        web_context = "\n\n".join([f"[WEB-{i + 1}] {r.get('content')}" for i, r in enumerate(search_results)])
-        web_sources = [f"[{r.get('title')}]({r.get('url')})" for r in search_results]
-        logger.info(f"Web search found {len(search_results)} results.")
+    # Choose loader based on file type
+    file_extension = Path(full_file_path).suffix.lower()
+    if file_extension == '.pdf':
+        loader = PyPDFLoader(str(full_file_path))
+    elif file_extension == '.txt':
+        loader = TextLoader(str(full_file_path))
     else:
-        logger.info("Step 2: Web search is disabled.")
+        # Fallback for other types like .doc, .docx, etc.
+        loader = UnstructuredFileLoader(str(full_file_path))
 
-    # 3. Build Prompt and Generate Stream
-    logger.info("Step 3: Building prompt and calling Gemini model in streaming mode.")
-    system_instruction = (
-        "You are a helpful assistant..."  # Keeping this short for the log
+    documents = loader.load()
+
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    chunks = text_splitter.split_documents(documents)
+
+    embedding_function = get_gemini_embeddings()
+
+    logger.info(f"Creating vector store for session {session_id} with {len(chunks)} chunks.")
+    Chroma.from_documents(
+        chunks,
+        embedding_function,
+        persist_directory=vectorstore_path
+    )
+    logger.info(f"Vector store created successfully for session {session_id} at {vectorstore_path}")
+
+
+@with_api_key_rotation
+def get_rag_context(query: str, session_id: int, top_k: int = 4) -> List[str]:
+    """
+    Retrieves relevant document chunks from the vector store for a given session and query.
+
+    Args:
+        query: The user's question.
+        session_id: The ID of the chat session.
+        top_k: The number of relevant chunks to retrieve.
+
+    Returns:
+        A list of strings, where each string is the content of a relevant document chunk.
+        Returns an empty list if no vector store exists or no documents are found.
+    """
+    if not has_vectorstore(session_id):
+        logger.debug(f"No vectorstore found for session {session_id}. Skipping RAG context retrieval.")
+        return []
+
+    vectorstore_path = str(settings.CHROMA_DIR / f"session_{session_id}")
+    embedding_function = get_gemini_embeddings()
+
+    vector_store = Chroma(
+        persist_directory=vectorstore_path,
+        embedding_function=embedding_function
     )
 
-    model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=system_instruction)
-    chat = model.start_chat(
-        history=[{"role": "model" if m.get("role") == "assistant" else "user", "parts": [m.get("content", "")]}
-                 for m in history or []])
+    retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
+    relevant_docs = retriever.get_relevant_documents(query)
 
-    response_stream = chat.send_message(question, stream=True)
-
-    # Yield each chunk of the main response as it arrives.
-    for chunk in response_stream:
-        if chunk.text:
-            yield chunk.text
-
-    # 4. Deterministically Yield Citations
-    # After the main response, append the sources we know we used.
-    logger.info("Step 4: Determining and yielding citations.")
-    sources_to_return = []
-    if doc_sources:
-        sources_to_return.extend(list(set(doc_sources)))
-    if web_sources:
-        sources_to_return.extend(web_sources)
-
-    if sources_to_return:
-        unique_sources = sorted(list(set(sources_to_return)))
-        source_header = "\n\n**Source:**\n"
-        source_list = "- " + "\n- ".join(unique_sources)
-        yield source_header + source_list
-
-    logger.info("-- RAG Pipeline (Stream) Finished --\n")
+    logger.info(f"Retrieved {len(relevant_docs)} document chunks for session {session_id}.")
+    return [doc.page_content for doc in relevant_docs]

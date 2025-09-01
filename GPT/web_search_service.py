@@ -27,8 +27,8 @@ class WebSearchManager:
         if not self.is_enabled():
             return []
         try:
-            # Fetch the top 3 results from DuckDuckGo
-            results = self.client.text(query, max_results=3)
+            # Fetch the top 2 results from DuckDuckGo
+            results = self.client.text(query, max_results=2)
             if not results:
                 return []
 

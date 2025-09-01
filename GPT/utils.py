@@ -1,5 +1,7 @@
 import logging
 import os
+import inspect
+from functools import wraps
 from typing import Callable, Tuple, TypeVar
 
 from google.api_core.exceptions import (InvalidArgument, PermissionDenied,
@@ -45,19 +47,49 @@ def with_api_key_rotation(func: Callable[..., T]) -> Callable[..., T]:
     """
     A decorator that wraps a function making a Google AI API call, providing
     automatic API key rotation and retries upon specific failures.
+    It handles both regular and generator functions correctly.
     """
-
-    def wrapper(*args, **kwargs) -> T:
-        for attempt in range(len(api_key_manager.keys)):
-            try:
-                return func(*args, **kwargs)
-            except RETRYABLE_EXCEPTIONS as e:
-                logger.warning(
-                    f"API call failed with key index {api_key_manager.current_index} (Attempt {attempt + 1}/{len(api_key_manager.keys)}). Reason: {type(e).__name__}."
-                )
-                if attempt == len(api_key_manager.keys) - 1:
-                    logger.error("All available API keys have been tried and failed.")
-                    raise e
-                api_key_manager.switch_to_next_key()
-
-    return wrapper
+    if inspect.isgeneratorfunction(func):
+        # This wrapper is for generator functions (like streaming chat)
+        @wraps(func)
+        def generator_wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(len(api_key_manager.keys)):
+                logger.info(f"Attempting API call with key index {api_key_manager.current_index} (Attempt {attempt + 1}/{len(api_key_manager.keys)}).")
+                try:
+                    # Create and yield from the generator within the try block
+                    yield from func(*args, **kwargs)
+                    # If we get here, the generator finished successfully.
+                    return
+                except RETRYABLE_EXCEPTIONS as e:
+                    last_exception = e
+                    logger.warning(
+                        f"API call with key index {api_key_manager.current_index} FAILED. Reason: {type(e).__name__} - {e}"
+                    )
+                    if attempt < len(api_key_manager.keys) - 1:
+                        api_key_manager.switch_to_next_key()
+                    else:
+                        logger.error("All available API keys have been tried and failed. Raising the last exception.")
+                        raise last_exception
+        return generator_wrapper
+    else:
+        # This wrapper is for regular functions (like RAG context retrieval)
+        @wraps(func)
+        def regular_wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(len(api_key_manager.keys)):
+                logger.info(f"Attempting API call with key index {api_key_manager.current_index} (Attempt {attempt + 1}/{len(api_key_manager.keys)}).")
+                try:
+                    # Execute the function and return its result
+                    return func(*args, **kwargs)
+                except RETRYABLE_EXCEPTIONS as e:
+                    last_exception = e
+                    logger.warning(
+                        f"API call with key index {api_key_manager.current_index} FAILED. Reason: {type(e).__name__} - {e}"
+                    )
+                    if attempt < len(api_key_manager.keys) - 1:
+                        api_key_manager.switch_to_next_key()
+                    else:
+                        logger.error("All available API keys have been tried and failed. Raising the last exception.")
+                        raise last_exception
+        return regular_wrapper
