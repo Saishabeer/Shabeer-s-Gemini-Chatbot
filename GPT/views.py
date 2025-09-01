@@ -1,5 +1,6 @@
 import os
 import markdown2
+import re
 from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
@@ -15,16 +16,27 @@ from .gemini_service import gemini_chat
 from .rag_service import ingest_document_for_session, rag_answer, delete_vectorstore_for_session, has_vectorstore
 
 
-def _process_and_format_response(prompt, session_id, history):
+def _get_and_format_response(prompt: str, history: list, session_id: int = None) -> str:
     """
-    Gets a response from the appropriate service (RAG or general) and formats it.
-    This now assumes rag_answer is smart enough to return empty sources for non-doc answers.
+    Gets a response from the appropriate service and formats it with sources.
+    It calls the RAG service if a document is associated with the session,
+    otherwise it calls the general chat service. Both are now web-aware.
     """
-    answer, srcs = rag_answer(prompt, session_id, history=history)
+    if session_id and has_vectorstore(session_id):
+        # RAG + Web Search
+        answer, srcs = rag_answer(prompt, session_id, history=history)
+    else:
+        # General Chat + Web Search
+        answer, srcs = gemini_chat(prompt, history=history)
+
+    # Clean up any lingering citations the model might have added despite instructions
+    # This regex removes [1], [WEB-1], [1, 2], [WEB-1, WEB-2], etc. from the answer text.
+    answer = re.sub(r'\s*\[(WEB-)?\d+(,\s*(WEB-)?\d+)*\]', '', answer).strip()
+
     if srcs:
-        # It's a document-based answer. Append the sources.
         unique_srcs = sorted(list(set(s for s in srcs if s)))
-        answer += "\n\n**Sources:**\n- " + "\n- ".join(unique_srcs)
+        # The user's request "just say source" is interpreted as changing the label here.
+        answer += "\n\n**Source:**\n- " + "\n- ".join(unique_srcs)
     return answer
 
 
@@ -182,11 +194,9 @@ def chat_view(request, session_id=None):
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
             try:
-                if target_session.document_path and has_vectorstore(target_session.id):
-                    ai_response = _process_and_format_response(prompt, target_session.id, history)
-                else:
-                    ai_response = gemini_chat(prompt, history)
-
+                # This single call now handles both RAG and general chat cases, including web search
+                ai_response = _get_and_format_response(prompt, history, session_id=target_session.id)
+                
                 # Convert Markdown to HTML for code formatting
                 html_response = markdown2.markdown(
                     ai_response,

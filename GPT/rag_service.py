@@ -12,6 +12,7 @@ from google.api_core.exceptions import ResourceExhausted, PermissionDenied, Inva
 
 import google.generativeai as genai
 from dotenv import load_dotenv
+from .web_search_service import web_search_manager
 
 # --- Load .env and configure Gemini ---
 load_dotenv()
@@ -155,29 +156,44 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
             current_key = api_key_manager.get_current_key()
             genai.configure(api_key=current_key)
 
+            # --- 1. Document Retrieval ---
             vectordb = _get_vectordb(session_id)
             docs = vectordb.similarity_search(question, k=top_k)
 
-            context_blocks = []
-            sources = []
+            doc_context_blocks = []
+            doc_sources = []
             for i, d in enumerate(docs, 1):
                 meta = d.metadata or {}
                 src = meta.get("source", "uploaded document")
                 page = meta.get("page")
                 label = f"{os.path.basename(src)}" + (f" • p.{page + 1}" if isinstance(page, int) else "")
-                context_blocks.append(f"[{i}] {d.page_content}")
-                sources.append(label)
+                doc_context_blocks.append(f"[{i}] {d.page_content}")
+                doc_sources.append(label)
+            doc_context = "\n\n".join(doc_context_blocks)
 
-            context = "\n\n".join(context_blocks)
+            # --- 2. Web Search ---
+            web_context_blocks = []
+            web_sources = []
+            if web_search_manager.is_enabled():
+                print(f"INFO: Performing web search for RAG query: '{question}'")
+                search_results = web_search_manager.search(question)
+                for i, result in enumerate(search_results, 1):
+                    web_context_blocks.append(f"[WEB-{i}] {result.get('content')}")
+                    # Format as a Markdown link for the final citation
+                    web_sources.append(f"[{result.get('title')}]({result.get('url')})")
+            web_context = "\n\n".join(web_context_blocks)
 
+            # --- 3. Combine Contexts and Build Prompt ---
             system_instruction = (
                 "You are a helpful assistant. Your response MUST be in two parts, separated by '---'.\n"
-                "Part 1: State the source of your answer. It must be one of: `SOURCE: DOCUMENT` or `SOURCE: KNOWLEDGE`.\n"
-                "Part 2: Provide the answer to the user's question.\n\n"
+                "Part 1: State the source of your answer. It must be one of: `SOURCE: DOCUMENT`, `SOURCE: WEB`, or `SOURCE: KNOWLEDGE`.\n"
+                "Part 2: Provide the answer to the user's question. **Do NOT include citations like [1] or [WEB-1] in the answer itself.** The answer should be clean text.\n\n"
                 "INSTRUCTIONS:\n"
-                "1. Examine the DOCUMENT CONTEXT. If it contains the answer, your first line MUST be `SOURCE: DOCUMENT`. Then, after '---', provide the answer, citing sources like [1], [2], etc.\n"
-                "2. If the answer is NOT in the DOCUMENT CONTEXT, but you know it from chat HISTORY or general knowledge, your first line MUST be `SOURCE: KNOWLEDGE`. Then, after '---', provide the answer without any sources.\n\n"
-                f"CONTEXT:\n{context}\n\n"
+                "1. First, check the DOCUMENT CONTEXT. If it answers the question, your first line MUST be `SOURCE: DOCUMENT`. Then, after '---', provide the answer.\n"
+                "2. If the document doesn't help, check the WEB SEARCH RESULTS. If they answer the question, your first line MUST be `SOURCE: WEB`. Then, after '---', provide the answer.\n"
+                "3. If neither context helps, but you know the answer from chat HISTORY or general knowledge, your first line MUST be `SOURCE: KNOWLEDGE`. Then, after '---', provide the answer.\n\n"
+                f"DOCUMENT CONTEXT:\n{doc_context}\n\n"
+                f"WEB SEARCH RESULTS:\n{web_context}\n\n"
             )
 
             # Convert our history list to Gemini's format
@@ -197,20 +213,31 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
 
             raw_answer = (getattr(resp, "text", "") or "").strip()
 
-            # Parse the structured response to determine the true source
+            # --- 4. Parse Response ---
+            # This robustly parses the model's output to separate the answer from the source header.
+            final_answer = raw_answer
+            sources_to_return = []
+
             answer_parts = raw_answer.split('---', 1)
             if len(answer_parts) == 2 and "SOURCE:" in answer_parts[0]:
-                header, final_answer = answer_parts[0].strip(), answer_parts[1].strip()
+                header = answer_parts[0].strip()
+                final_answer = answer_parts[1].strip()
                 if header == "SOURCE: DOCUMENT":
-                    # Model claims it used the document, so we return the sources.
-                    return final_answer, sources
-                else:  # "SOURCE: KNOWLEDGE"
-                    # Model claims it used its own knowledge, so we discard the sources.
-                    return final_answer, []
+                    sources_to_return = doc_sources
+                elif header == "SOURCE: WEB":
+                    sources_to_return = web_sources
             else:
-                # Fallback if the model doesn't follow the structured format.
-                # We return the raw answer and discard the sources to be safe and avoid false citations.
-                return raw_answer, []
+                # Fallback if '---' is missing. Check for a header at the start of the string.
+                if raw_answer.startswith("SOURCE: DOCUMENT"):
+                    final_answer = raw_answer.replace("SOURCE: DOCUMENT", "", 1).strip()
+                    sources_to_return = doc_sources
+                elif raw_answer.startswith("SOURCE: WEB"):
+                    final_answer = raw_answer.replace("SOURCE: WEB", "", 1).strip()
+                    sources_to_return = web_sources
+                elif raw_answer.startswith("SOURCE: KNOWLEDGE"):
+                    final_answer = raw_answer.replace("SOURCE: KNOWLEDGE", "", 1).strip()
+
+            return final_answer, sources_to_return
 
         except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
             print(f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during RAG. Reason: {type(e).__name__}")
