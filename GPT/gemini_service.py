@@ -21,9 +21,13 @@ def _should_search_web(prompt: str) -> bool:
     Uses the LLM to quickly decide if a web search is necessary for a given prompt.
     This avoids unnecessary web searches for simple conversational questions.
     """
-    # Heuristic: Very short prompts are usually conversational and don't need a search.
-    if len(prompt.split()) < 3:
-        print(f"INFO: Skipping web search for short prompt: '{prompt}'")
+    # --- Heuristic Improvement ---
+    # Check for common conversational patterns to avoid an unnecessary LLM call.
+    # This is more robust than just checking the length.
+    prompt_lower = prompt.lower().strip()
+    conversational_starters = ('hi', 'hello', 'hey', 'my name is', 'what is my name', 'thank you', 'thanks', "what's my name")
+    if prompt_lower.startswith(conversational_starters):
+        print(f"INFO: Skipping web search for conversational prompt: '{prompt}'")
         return False
 
     try:
