@@ -4,8 +4,8 @@ import gc
 import logging
 import markdown2
 from django.conf import settings
-from django.contrib import messages
-from django.contrib.auth import authenticate, login, get_user_model
+from django.contrib import messages, auth
+from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.files.storage import FileSystemStorage
 from django.shortcuts import render, redirect, get_object_or_404
@@ -40,15 +40,63 @@ def _get_and_format_response(prompt: str, history: list, session_id: int = None)
 
 # --- Auth Views (logging is minimal here) ---
 def register(request):
+    """Handles user registration."""
     if request.method == "POST":
-        # ... (registration logic) ...
+        # NOTE: Using Django Forms is highly recommended for robust validation and security.
+        # This is a manual implementation as requested.
+        username = request.POST.get('username')
+        email = request.POST.get('email')
+        password = request.POST.get('password')
+        password2 = request.POST.get('password2')
+
+        if not all([username, email, password, password2]):
+            messages.error(request, "All fields are required.")
+            return render(request, 'register.html')
+
+        if password != password2:
+            messages.error(request, "Passwords do not match.")
+            return render(request, 'register.html')
+
+        if User.objects.filter(username=username).exists():
+            messages.error(request, f"Username '{username}' is already taken.")
+            return render(request, 'register.html')
+
+        if User.objects.filter(email=email).exists():
+            messages.error(request, "A user with that email already exists.")
+            return render(request, 'register.html')
+
+        user = User.objects.create_user(username=username, email=email, password=password)
+        login(request, user)
+        messages.success(request, "Registration successful!")
         return redirect('home')
+
     return render(request, 'register.html')
 
+
 def user_login(request):
+    """Handles user login."""
     if request.method == "POST":
-        # ... (login logic) ...
-        return redirect('home')
+        username_or_email = request.POST.get('username')
+        password = request.POST.get('password')
+
+        if not username_or_email or not password:
+            messages.error(request, "Please enter a username/email and password.")
+            return render(request, "login.html")
+
+        user = authenticate(request, username=username_or_email, password=password)
+        if user is None and '@' in username_or_email:
+            try:
+                user_by_email = User.objects.get(email=username_or_email)
+                user = authenticate(request, username=user_by_email.username, password=password)
+            except User.DoesNotExist:
+                pass
+
+        if user is not None:
+            login(request, user)
+            return redirect('home')
+        else:
+            messages.error(request, "Invalid username/email or password.")
+
     return render(request, "login.html")
 
 
@@ -110,9 +158,19 @@ def chat_view(request, session_id=None):
                     messages.success(request, f"✅ Ready to answer questions about '{uploaded_file.name}'.")
             except Exception as e:
                 logger.error(f"Error processing document for session {target_session.id}: {e}", exc_info=True)
-                messages.error(request, f"Error processing document: {e}")
-                # ... (cleanup logic) ...
-                return redirect(request.path)
+                messages.error(request, f"Sorry, there was an error processing your document: {e}")
+
+                # Cleanup on failure
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                delete_vectorstore_for_session(target_session.id)
+
+                # If the session was newly created for this upload, delete it entirely
+                if not active_session:  # active_session is None if we just created target_session
+                    target_session.delete()
+                    return redirect('home')  # Go home, the session is gone
+
+                return redirect('chat_session', session_id=target_session.id)
             finally:
                 gc.collect()
 
@@ -128,7 +186,9 @@ def chat_view(request, session_id=None):
                 target_session.save()
                 logger.info(f"Updated session {target_session.id} title to: '{prompt[:50]}...'")
 
-            history = list(target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp").values('role', 'content'))
+            history = list(
+                target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp").values('role',
+                                                                                                            'content'))
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
             try:
