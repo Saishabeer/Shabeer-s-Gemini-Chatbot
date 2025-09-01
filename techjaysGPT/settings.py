@@ -10,25 +10,36 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file
+load_dotenv(BASE_DIR / '.env')
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# --- DEVELOPMENT FIX ---
+# The settings below are temporarily hardcoded to resolve a persistent startup issue.
+# This will get the server running for local development.
+DEBUG = True
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+
+# Original environment-based settings (to be restored after debugging the .env issue)
+# SECRET_KEY = os.getenv('SECRET_KEY')
+# DEBUG = os.getenv('DEBUG', 'False') == 'True'
+# raw_hosts = os.getenv('ALLOWED_HOSTS')
+# if raw_hosts:
+#     ALLOWED_HOSTS = [host.strip() for host in raw_hosts.split(',')]
+# elif DEBUG:
+#     ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+# else:
+#     ALLOWED_HOSTS = []
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*gv716rt1rgvba-sn2o_*3a43-w#g@k^dli1e0wn!4xeygd2x='
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-# Add your ngrok domain here. You can use '*' for quick testing,
-# but specifying the domain is more secure.
-# Example: ALLOWED_HOSTS = ['some-random-string.ngrok-free.app']
-ALLOWED_HOSTS = ['*']
+# We will use a default key for now, but the real key should be in your .env file.
+SECRET_KEY = os.getenv('SECRET_KEY', 'temporary-insecure-key-for-development')
 
 
 # Application definition
@@ -81,18 +92,13 @@ WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    # Using SQLite for local development is fine, but for any deployment or
-    # multi-user testing, PostgreSQL is strongly recommended for its robustness
-    # and ability to handle concurrent writes without locking issues.
     'default': {
-        # Switch from SQLite to PostgreSQL.
-        # You'll need to install the driver: pip install psycopg2-binary
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'techjays_gpt_db',  # The name of your database in PostgreSQL
-        'USER': 'postgres',      # Your PostgreSQL username
-        'PASSWORD': '1910', # Your PostgreSQL password
-        'HOST': 'localhost',        # Or the IP of your database server
-        'PORT': '5432',             # Default PostgreSQL port
+        'ENGINE': os.getenv('DB_ENGINE', 'django.db.backends.postgresql'),
+        'NAME': os.getenv('DB_NAME', 'techjays_gpt_db'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', '1910'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
 
@@ -157,3 +163,28 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Chroma persistent directory (per-session subfolders will be created)
 CHROMA_DIR = BASE_DIR / 'chroma'
+
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
+            'datefmt': '%d/%b/%Y %H:%M:%S'
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose'
+        },
+    },
+    'loggers': {
+        'GPT': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    }
+}

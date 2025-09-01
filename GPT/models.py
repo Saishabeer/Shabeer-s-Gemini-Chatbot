@@ -1,6 +1,5 @@
 from django.db import models
 from django.contrib.auth.models import User
-import os
 
 
 class ChatSession(models.Model):
@@ -9,16 +8,10 @@ class ChatSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     document_name = models.CharField(max_length=255, blank=True, null=True)
     document_path = models.CharField(max_length=512, blank=True, null=True)
+    title = models.CharField(max_length=100, default='New Chat')
 
     def __str__(self):
-        # Prioritize document name for the title
-        if self.document_name:
-            # Return just the filename, not the whole path
-            return os.path.basename(self.document_name)
-
-        # Fallback to existing logic
-        first_message = self.messages.filter(role='user').first()
-        return first_message.content[:50] if first_message else f"Chat {self.id}"
+        return self.title
 
 
 class ChatMessage(models.Model):

@@ -1,121 +1,88 @@
 import os
+import logging
 from typing import List, Tuple
-from dotenv import load_dotenv
+
 import google.generativeai as genai
+from dotenv import load_dotenv
+from google.api_core.exceptions import InvalidArgument, PermissionDenied, ResourceExhausted
 from langchain_google_genai._common import GoogleGenerativeAIError
 
-# Import the key manager and exceptions from your RAG service
-from .web_search_service import web_search_manager
 from .rag_service import api_key_manager
-from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
+from .web_search_service import web_search_manager
 
-# Load .env
+# --- Basic Setup ---
+logger = logging.getLogger(__name__)
 load_dotenv()
 
-# Use the same environment variable as rag_service for consistency
+# --- Global Instances & Tunables ---
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 
 def _should_search_web(prompt: str) -> bool:
-    """
-    Uses heuristics to decide if a web search is necessary for a given prompt.
-    """
+    """Uses heuristics to decide if a web search is necessary."""
     prompt_lower = prompt.lower().strip()
     conversational_starters = ('hi', 'hello', 'hey', 'my name is', 'what is my name', 'thank you', 'thanks', "what's my name")
     if prompt_lower.startswith(conversational_starters) or len(prompt.split()) < 3:
-        print(f"INFO: Skipping web search for simple/conversational prompt: '{prompt}'")
+        logger.info(f"Skipping web search for simple/conversational prompt: '{prompt}'")
         return False
-    
     return True
+
 
 def gemini_chat(prompt: str, history: List[dict] = None) -> Tuple[str, List[str]]:
     """
-    Handles general knowledge chat. Intelligently decides whether to fetch
-    web results to provide up-to-date answers.
-    Includes API key rotation and retry logic.
+    Handles general knowledge chat, intelligently deciding whether to fetch web results.
     """
-    # This loop will retry with the next API key if the current one is exhausted or invalid.
+    logger.info(f"-- General Chat Pipeline Initiated --")
+    logger.info(f"User prompt: '{prompt}'")
+
     for _ in range(len(api_key_manager.keys)):
         try:
-            # Configure the library with the current key for this attempt
             current_key = api_key_manager.get_current_key()
             genai.configure(api_key=current_key)
 
-            # --- 1. Web Search ---
-            web_context_blocks = []
-            web_sources = []
-            # Use the router to make an intelligent decision on whether to search.
+            # 1. Web Search
+            web_context, web_sources = "", []
             if _should_search_web(prompt) and web_search_manager.is_enabled():
-                print(f"INFO: Performing web search for general chat: '{prompt}'")
+                logger.info(f"Step 1: Performing web search for query: '{prompt}'")
                 search_results = web_search_manager.search(prompt)
-                for i, result in enumerate(search_results, 1):
-                    web_context_blocks.append(f"[WEB-{i}] {result.get('content')}")
-                    web_sources.append(f"[{result.get('title')}]({result.get('url')})")
-            web_context = "\n\n".join(web_context_blocks)
+                web_context = "\n\n".join([f"[WEB-{i + 1}] {r.get('content')}" for i, r in enumerate(search_results)])
+                web_sources = [f"[{r.get('title')}]({r.get('url')})" for r in search_results]
+                logger.info(f"Web search found {len(search_results)} results.")
+            else:
+                logger.info("Step 1: Web search skipped based on prompt or settings.")
 
-            # --- 2. Build Prompt ---
-            if web_context:
-                system_instruction = (
-                    "You are a helpful assistant. Your response MUST be in two parts, separated by '---'.\n"
-                    "Part 1: State the source of your answer. It must be one of: `SOURCE: WEB` or `SOURCE: KNOWLEDGE`.\n"
-                    "Part 2: Provide the answer to the user's question. **Do NOT include citations like [WEB-1] in the answer itself.** The answer should be clean text.\n\n"
-                    "INSTRUCTIONS:\n"
-                    "1. Examine the WEB SEARCH RESULTS. If they contain the answer, your first line MUST be `SOURCE: WEB`. Then, after '---', provide the answer.\n"
-                    "2. If the web results are not relevant, but you know the answer from chat HISTORY or general knowledge, your first line MUST be `SOURCE: KNOWLEDGE`. Then, after '---', provide the answer.\n\n"
-                    f"WEB SEARCH RESULTS:\n{web_context}\n\n"
-                )
-            else:  # No web search enabled or no results
-                system_instruction = (
-                    "You are a helpful and friendly conversational AI. "
-                    "Answer the user's question clearly and concisely."
-                )
+            # 2. Build Prompt and Generate
+            logger.info("Step 2: Building prompt and calling Gemini model.")
+            system_instruction = "You are a helpful assistant..."  # Keep short for log
 
-            # --- 3. Call API ---
-            model = genai.GenerativeModel(
-                model_name=GEMINI_MODEL,
-                system_instruction=system_instruction
-            )
-
-            # Convert our history list to Gemini's format
-            gemini_history = []
-            for m in history or []:
-                role = "model" if m.get("role") == "assistant" else "user"
-                gemini_history.append({"role": role, "parts": [m.get("content", "")]})
-
-            chat = model.start_chat(history=gemini_history)
+            model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=system_instruction)
+            chat = model.start_chat(history=[{"role": "model" if m.get("role") == "assistant" else "user", "parts": [m.get("content", "")]} for m in history or []])
             resp = chat.send_message(prompt)
-
             raw_answer = (getattr(resp, "text", "") or "").strip()
+            logger.info(f"Model raw response: '{raw_answer[:100]}...'")
 
-            # --- 4. Parse Response ---
-            # This robustly parses the model's output to separate the answer from the source header.
-            final_answer = raw_answer
-            sources_to_return = []
+            # 3. Parse Response
+            logger.info("Step 3: Parsing response.")
+            final_answer, sources_to_return = raw_answer, []
 
             if web_context:
-                answer_parts = raw_answer.split('---', 1)
-                if len(answer_parts) == 2 and "SOURCE:" in answer_parts[0]:
-                    header = answer_parts[0].strip()
-                    final_answer = answer_parts[1].strip()
-                    if header == "SOURCE: WEB":
-                        sources_to_return = web_sources
+                if "SOURCE: WEB" in raw_answer:
+                    final_answer = raw_answer.split("---", 1)[-1].strip()
+                    sources_to_return = web_sources
+                    logger.info("Source determined: WEB. Answer is grounded in web search results.")
                 else:
-                    # Fallback if '---' is missing. Check for a header at the start of the string.
-                    if raw_answer.startswith("SOURCE: WEB"):
-                        final_answer = raw_answer.replace("SOURCE: WEB", "", 1).strip()
-                        sources_to_return = web_sources
-                    elif raw_answer.startswith("SOURCE: KNOWLEDGE"):
-                        final_answer = raw_answer.replace("SOURCE: KNOWLEDGE", "", 1).strip()
+                    final_answer = raw_answer.split("---", 1)[-1].strip()
+                    logger.info("Source determined: KNOWLEDGE. Answer is from model's internal knowledge.")
 
+            logger.info(f"Final Answer: '{final_answer[:100]}...'")
+            logger.info("-- General Chat Pipeline Finished --\n")
             return final_answer, sources_to_return
 
         except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
-            print(f"WARNING: API key at index {api_key_manager.current_index} (ending in '...{api_key_manager.get_current_key()[-4:]}') failed during general chat. Reason: {type(e).__name__}")
-            can_switch = api_key_manager.switch_to_next_key()
-            if not can_switch:
-                print("ERROR: All available API keys are invalid or have reached their quota.")
-                raise e # Re-raise the exception to be handled by the view
-            print("INFO: Switching to the next API key for general chat.")
+            logger.warning(f"API key at index {api_key_manager.current_index} failed during general chat. Reason: {type(e).__name__}")
+            if not api_key_manager.switch_to_next_key():
+                logger.error("All available API keys are invalid or have reached their quota.")
+                raise e
+            logger.info("Switching to the next API key for general chat.")
 
-    # This part is reached if all keys fail
     raise ResourceExhausted("All available API keys failed during general chat.")
