@@ -57,7 +57,8 @@
     <div class="message-area">
       {% for message in chat_messages %}
         <div class="message {{ message.role }}">
-          <div class="message-content">{{ message.content|safe }}</div>
+          {# We output the raw markdown here. The JS will render it for consistency. #}
+          <div class="message-content">{{ message.content }}</div>
         </div>
       {% empty %}
         <div class="welcome-message">
@@ -81,23 +82,24 @@
 </div>
 
 <script>
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', (event) => {
+    const messageArea = document.querySelector('.message-area');
+    const promptForm = document.querySelector('.prompt-form');
+    const promptInput = promptForm.querySelector('input[name="prompt"]');
+    const sendButton = promptForm.querySelector('button[type="submit"]');
+
     // --- Theme Toggling Logic ---
     const themeToggle = document.getElementById('theme-toggle');
     if (themeToggle) {
         const htmlElement = document.documentElement;
         const applyTheme = (theme) => {
-            if (theme === 'dark') {
-                htmlElement.classList.add('dark-theme');
-            } else {
-                htmlElement.classList.remove('dark-theme');
-            }
+            htmlElement.classList.toggle('dark-theme', theme === 'dark');
         };
 
         const savedTheme = localStorage.getItem('theme');
         const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         const currentTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-        
+
         applyTheme(currentTheme);
 
         themeToggle.addEventListener('click', () => {
@@ -107,15 +109,123 @@
         });
     }
 
-    // --- Scroll to bottom logic ---
-    const messageArea = document.querySelector('.message-area');
-    if (messageArea) {
-      messageArea.scrollTop = messageArea.scrollHeight;
-    }
-    
-    //---Syntax Highlighting ---
-    document.querySelectorAll('pre code').forEach((block) => {
-      hljs.highlightBlock(block);
+    // --- Helper Functions ---
+    const scrollToBottom = () => {
+        if (messageArea) {
+            messageArea.scrollTop = messageArea.scrollHeight;
+        }
+    };
+
+    const renderContent = (element) => {
+        // Get the raw markdown text from the element.
+        const rawMarkdown = element.textContent || '';
+        if (!rawMarkdown.trim()) {
+            element.textContent = 'Sorry, I couldn\'t generate a response.';
+            return;
+        }
+
+        // Use marked.js to convert markdown to HTML
+        if (typeof marked !== 'undefined') {
+            element.innerHTML = marked.parse(rawMarkdown);
+        } else {
+            console.error("marked.js is not loaded. Cannot render markdown.");
+            element.innerHTML = rawMarkdown.replace(/\n/g, '<br>'); // Basic fallback
+        }
+
+        // Use highlight.js to apply syntax highlighting to code blocks
+        if (typeof hljs !== 'undefined') {
+            element.querySelectorAll('pre code').forEach((block) => {
+                hljs.highlightBlock(block);
+            });
+        }
+    };
+
+    // --- Initial Page Load ---
+    // Render all existing assistant messages and scroll to the bottom.
+    document.querySelectorAll('.message.assistant .message-content').forEach(renderContent);
+    scrollToBottom();
+
+    // --- Handle Form Submission (AJAX for Streaming) ---
+    promptForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const promptText = promptInput.value.trim();
+        if (!promptText) return;
+
+        // 1. Display User Message
+        const welcomeMessage = document.querySelector('.welcome-message');
+        if (welcomeMessage) welcomeMessage.remove();
+
+        const userMessage = document.createElement('div');
+        userMessage.className = 'message user';
+        const userContent = document.createElement('div');
+        userContent.className = 'message-content';
+        userContent.textContent = promptText; // Use textContent for security
+        userMessage.appendChild(userContent);
+        messageArea.appendChild(userMessage);
+        scrollToBottom();
+
+        // 2. Prepare Assistant's Message Bubble
+        const assistantMessage = document.createElement('div');
+        assistantMessage.className = 'message assistant';
+        const assistantContent = document.createElement('div');
+        assistantContent.className = 'message-content';
+        assistantContent.innerHTML = '<span class="thinking-indicator"></span>'; // Simple loading indicator
+        assistantMessage.appendChild(assistantContent);
+        messageArea.appendChild(assistantMessage);
+        scrollToBottom();
+
+        // 3. Disable Form and Clear Input
+        const formData = new FormData(promptForm);
+        promptInput.value = '';
+        promptInput.disabled = true;
+        sendButton.disabled = true;
+
+        // 4. Fetch and Process Stream
+        try {
+            const response = await fetch(promptForm.action, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': promptForm.querySelector('input[name="csrfmiddlewaretoken"]').value,
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server responded with status: ${response.status}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let firstChunk = true;
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                if (firstChunk) {
+                    assistantContent.innerHTML = ''; // Clear the thinking indicator
+                    firstChunk = false;
+                }
+
+                const textChunk = decoder.decode(value, { stream: true });
+                assistantContent.textContent += textChunk; // Append raw text for smooth typing effect
+                scrollToBottom();
+            }
+
+        } catch (error) {
+            console.error('Streaming or request failed:', error);
+            assistantContent.textContent = 'Sorry, an error occurred while getting the response.';
+        } finally {
+            // Final render of the complete message with markdown and syntax highlighting
+            renderContent(assistantContent);
+
+            // Re-enable form
+            promptInput.disabled = false;
+            sendButton.disabled = false;
+            promptInput.focus();
+            scrollToBottom(); // Final scroll after content is fully rendered
+        }
     });
   });
 </script>

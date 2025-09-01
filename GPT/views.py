@@ -1,41 +1,23 @@
 import os
-import re
 import gc
 import logging
-import markdown2
 from django.conf import settings
 from django.contrib import messages, auth
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.files.storage import FileSystemStorage
+from django.http import StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from google.api_core.exceptions import (InvalidArgument, PermissionDenied, ResourceExhausted)
 from langchain_google_genai._common import GoogleGenerativeAIError
 
-from .gemini_service import gemini_chat
+from .gemini_service import gemini_chat_stream
 from .models import ChatMessage, ChatSession
-from .rag_service import (delete_vectorstore_for_session, has_vectorstore, ingest_document_for_session, rag_answer)
+from .rag_service import (delete_vectorstore_for_session, has_vectorstore, ingest_document_for_session, rag_answer_stream)
 
 # --- Basic Setup ---
 logger = logging.getLogger(__name__)
 User = get_user_model()
-
-
-def _get_and_format_response(prompt: str, history: list, session_id: int = None) -> str:
-    """Gets a response from the appropriate service and formats it with sources."""
-    if session_id and has_vectorstore(session_id):
-        logger.info(f"Routing to RAG service for session {session_id}.")
-        answer, srcs = rag_answer(prompt, session_id, history=history)
-    else:
-        logger.info("Routing to General Chat service.")
-        answer, srcs = gemini_chat(prompt, history=history)
-
-    answer = re.sub(r'\s*\[(WEB-)?\d+(,\s*(WEB-)?\d+)*\]', '', answer).strip()
-
-    if srcs:
-        unique_srcs = sorted(list(set(s for s in srcs if s)))
-        answer += f"\n\n**Source:**\n- {'\n- '.join(unique_srcs)}"
-    return answer
 
 
 # --- Auth Views (logging is minimal here) ---
@@ -123,7 +105,11 @@ def delete_chat_session(request, session_id):
 
 @login_required
 def chat_view(request, session_id=None):
-    logger.info(f"Request received for chat_view. Method: {request.method}, Session ID: {session_id}")
+    """
+    Handles both rendering the chat interface (GET) and processing user input (POST).
+    POST requests with a prompt will return a StreamingHttpResponse for real-time chat.
+    """
+    logger.info(f"Request for chat_view. Method: {request.method}, Session ID: {session_id}, User: {request.user}")
     active_session = get_object_or_404(ChatSession, id=session_id, user=request.user) if session_id else None
     chat_sessions = ChatSession.objects.filter(user=request.user).order_by("-created_at")
 
@@ -189,25 +175,47 @@ def chat_view(request, session_id=None):
             history = list(
                 target_session.messages.filter(role__in=['user', 'assistant']).order_by("timestamp").values('role',
                                                                                                             'content'))
+            # Save the user's message before starting the stream.
             ChatMessage.objects.create(session=target_session, role='user', content=prompt)
 
-            try:
-                ai_response = _get_and_format_response(prompt, history, session_id=target_session.id)
-                html_response = markdown2.markdown(ai_response, extras=["fenced-code-blocks", "code-friendly"])
-                ChatMessage.objects.create(session=target_session, role='assistant', content=html_response)
-                logger.info(f"Successfully generated and saved AI response for session {target_session.id}")
-            except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
-                logger.error(f"AI service error for session {target_session.id}: {e}", exc_info=True)
-                messages.error(request, "The service is currently at its daily capacity. Please try again tomorrow.")
-            finally:
-                gc.collect()
+            def stream_response_generator():
+                """A generator function that streams the AI response and saves the full text at the end."""
+                full_response = []
+                try:
+                    # Route to the correct streaming service based on whether a vector store exists
+                    if has_vectorstore(target_session.id):
+                        logger.info(f"Streaming from RAG service for session {target_session.id}.")
+                        stream = rag_answer_stream(prompt, target_session.id, history=history)
+                    else:
+                        logger.info("Streaming from General Chat service.")
+                        stream = gemini_chat_stream(prompt, history=history)
 
-            return redirect('chat_session', session_id=target_session.id)
+                    for chunk in stream:
+                        full_response.append(chunk)
+                        yield chunk
+                except (ResourceExhausted, PermissionDenied, InvalidArgument, GoogleGenerativeAIError) as e:
+                    logger.error(f"AI service error during stream for session {target_session.id}: {e}", exc_info=True)
+                    yield "Error: The AI service is currently unavailable or at capacity. Please try again later."
+                finally:
+                    # After the stream is complete, save the full raw markdown response to the database.
+                    # The frontend will be responsible for rendering it.
+                    final_text = "".join(full_response).strip()
+                    if final_text:
+                        ChatMessage.objects.create(session=target_session, role='assistant', content=final_text)
+                        logger.info(f"Successfully streamed and saved AI response for session {target_session.id}")
+                    gc.collect()
+
+            # Return the streaming response to the browser
+            return StreamingHttpResponse(stream_response_generator(), content_type="text/plain")
 
         if not uploaded_file and not prompt:
             messages.error(request, "Please enter a prompt or upload a file.")
-            return redirect(request.path)
+            # If there's an active session, redirect to it. Otherwise, go home.
+            if active_session:
+                return redirect('chat_session', session_id=active_session.id)
+            return redirect('home')
 
+    # This block handles GET requests
     context = {
         'chat_sessions': chat_sessions,
         'active_session': active_session,

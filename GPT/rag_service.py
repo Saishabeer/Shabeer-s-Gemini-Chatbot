@@ -1,7 +1,7 @@
 import os
 import logging
 import shutil
-from typing import List, Tuple
+from typing import List, Tuple, Iterable
 
 import google.generativeai as genai
 from django.conf import settings
@@ -139,9 +139,9 @@ def _get_vectordb(session_id: int):
     return Chroma(embedding_function=_get_embeddings(), persist_directory=_session_chroma_dir(session_id))
 
 
-def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k: int = TOP_K_DEFAULT) -> Tuple[
-    str, List[str]]:
-    logger.info(f"-- RAG Pipeline Initiated for Session {session_id} --")
+def rag_answer_stream(question: str, session_id: int, history: List[dict] = None, top_k: int = TOP_K_DEFAULT) -> \
+Iterable[str]:
+    logger.info(f"-- RAG Pipeline (Stream) Initiated for Session {session_id} --")
     logger.info(f"User prompt: '{question}'")
 
     for _ in range(len(api_key_manager.keys)):
@@ -149,15 +149,15 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
             current_key = api_key_manager.get_current_key()
             genai.configure(api_key=current_key)
 
-            # 1. Document Retrieval
-            logger.info(f"Step 1: Retrieving top {top_k} document chunks from knowledge base.")
+            # 1. Document Retrieval (Happens before streaming)
+            logger.info(f"Step 1: Retrieving top {top_k} document chunks from knowledge base for streaming.")
             vectordb = _get_vectordb(session_id)
             docs = vectordb.similarity_search(question, k=top_k)
             doc_context = "\n\n".join([f"[{i + 1}] {d.page_content}" for i, d in enumerate(docs)])
             doc_sources = [os.path.basename(d.metadata.get("source", "")) for d in docs]
             logger.info(f"Retrieved {len(docs)} chunks. Sources: {doc_sources}")
 
-            # 2. Web Search
+            # 2. Web Search (Happens before streaming)
             web_context, web_sources = "", []
             if web_search_manager.is_enabled():
                 logger.info(f"Step 2: Performing web search for query: '{question}'")
@@ -168,47 +168,45 @@ def rag_answer(question: str, session_id: int, history: List[dict] = None, top_k
             else:
                 logger.info("Step 2: Web search is disabled.")
 
-            # 3. Build Prompt and Generate
-            logger.info("Step 3: Building prompt and calling Gemini model.")
+            # 3. Build Prompt and Generate Stream
+            logger.info("Step 3: Building prompt and calling Gemini model in streaming mode.")
             system_instruction = (
                 "You are a helpful assistant..."  # Keeping this short for the log
             )
-            # For debugging, you can log the full prompt:
-            # logger.debug(f"System Instruction: {system_instruction}")
-            # logger.debug(f"Document Context: {doc_context}")
-            # logger.debug(f"Web Context: {web_context}")
 
             model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=system_instruction)
-            chat = model.start_chat(history=[{"role": "model" if m.get("role") == "assistant" else "user", "parts": [m.get("content", "")]} for m in history or []])
-            resp = chat.send_message(question)
-            raw_answer = (getattr(resp, "text", "") or "").strip()
-            logger.info(f"Model raw response: '{raw_answer[:100]}...'")
+            chat = model.start_chat(
+                history=[{"role": "model" if m.get("role") == "assistant" else "user", "parts": [m.get("content", "")]}
+                         for m in history or []])
 
-            # 4. Parse Response and Simulate Metrics
-            logger.info("Step 4: Parsing response and evaluating RAG metrics.")
-            final_answer, sources_to_return = raw_answer, []
-            if "SOURCE: DOCUMENT" in raw_answer:
-                final_answer = raw_answer.split("---", 1)[-1].strip()
-                sources_to_return = list(set(doc_sources))
-                logger.info("Source determined: DOCUMENT. Answer is grounded in the uploaded file.")
-                logger.info("  - Groundedness: PASSED (Answer based on provided context)")
-                logger.info("  - Faithfulness: PASSED (Answer aligns with retrieved chunks)")
-            elif "SOURCE: WEB" in raw_answer:
-                final_answer = raw_answer.split("---", 1)[-1].strip()
-                sources_to_return = web_sources
-                logger.info("Source determined: WEB. Answer is grounded in web search results.")
-                logger.info("  - Groundedness: PASSED (Answer based on provided context)")
-            else:
-                final_answer = raw_answer.split("---", 1)[-1].strip()
-                logger.info("Source determined: KNOWLEDGE. Answer is from model's internal knowledge.")
-                logger.info("  - Groundedness: N/A (No external context to check against)")
+            response_stream = chat.send_message(question, stream=True)
 
-            logger.info(f"Final Answer: '{final_answer[:100]}...'")
-            logger.info("-- RAG Pipeline Finished --\n")
-            return final_answer, sources_to_return
+            # Yield each chunk of the main response as it arrives.
+            for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
+
+            # 4. Deterministically Yield Citations
+            # After the main response, append the sources we know we used.
+            logger.info("Step 4: Determining and yielding citations.")
+            sources_to_return = []
+            if doc_sources:
+                sources_to_return.extend(list(set(doc_sources)))
+            if web_sources:
+                sources_to_return.extend(web_sources)
+
+            if sources_to_return:
+                unique_sources = sorted(list(set(sources_to_return)))
+                source_header = "\n\n**Source:**\n"
+                source_list = "- " + "\n- ".join(unique_sources)
+                yield source_header + source_list
+
+            logger.info("-- RAG Pipeline (Stream) Finished --\n")
+            return  # Stop the generator
 
         except (ResourceExhausted, PermissionDenied, InvalidArgument) as e:
-            logger.warning(f"API key at index {api_key_manager.current_index} failed during RAG. Reason: {type(e).__name__}")
+            logger.warning(
+                f"API key at index {api_key_manager.current_index} failed during RAG. Reason: {type(e).__name__}")
             if not api_key_manager.switch_to_next_key():
                 logger.error("All available API keys are invalid or have reached their quota.")
                 raise e
