@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+import dj_database_url
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -20,27 +21,28 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / '.env')
 
-# --- DEVELOPMENT FIX ---
-# The settings below are temporarily hardcoded to resolve a persistent startup issue.
-# This will get the server running for local development.
-DEBUG = True
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+# --- Core Settings ---
 
-# Original environment-based settings (to be restored after debugging the .env issue)
-# SECRET_KEY = os.getenv('SECRET_KEY')
-# DEBUG = os.getenv('DEBUG', 'False') == 'True'
-# raw_hosts = os.getenv('ALLOWED_HOSTS')
-# if raw_hosts:
-#     ALLOWED_HOSTS = [host.strip() for host in raw_hosts.split(',')]
-# elif DEBUG:
-#     ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
-# else:
-#     ALLOWED_HOSTS = []
+# SECURITY WARNING: don't run with debug turned on in production!
+# This MUST be defined before other settings that depend on it.
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# We will use a default key for now, but the real key should be in your .env file.
-SECRET_KEY = os.getenv('SECRET_KEY', 'temporary-insecure-key-for-development')
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        print("WARNING: SECRET_KEY not found in .env. Using a temporary, insecure key for development.")
+        SECRET_KEY = 'temporary-insecure-key-for-development'
+    else:
+        raise ValueError("SECRET_KEY environment variable must be set in production (when DEBUG=False).")
 
+# In production, set this in .env as a comma-separated string: e.g., 'yourdomain.com,www.yourdomain.com'
+ALLOWED_HOSTS = []
+raw_hosts = os.getenv('ALLOWED_HOSTS')
+if raw_hosts:
+    ALLOWED_HOSTS.extend([host.strip() for host in raw_hosts.split(',')])
+if DEBUG:
+    ALLOWED_HOSTS.extend(['127.0.0.1', 'localhost'])
 
 # Application definition
 
@@ -91,15 +93,14 @@ WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# Using dj-database-url to parse a single DATABASE_URL from the environment.
+# This is a standard practice for modern Django applications and simplifies deployment.
 DATABASES = {
-    'default': {
-        'ENGINE': os.getenv('DB_ENGINE', 'django.db.backends.postgresql'),
-        'NAME': os.getenv('DB_NAME', 'techjays_gpt_db'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', '1910'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5432'),
-    }
+    'default': dj_database_url.config(
+        # Fallback to a local SQLite DB if DATABASE_URL is not set.
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600  # Keep connections alive for 10 minutes
+    )
 }
 
 

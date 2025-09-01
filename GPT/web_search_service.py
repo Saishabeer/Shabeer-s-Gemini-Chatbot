@@ -1,5 +1,8 @@
+import logging
 from typing import List, Dict
 from ddgs import DDGS
+
+logger = logging.getLogger(__name__)
 
 
 class WebSearchManager:
@@ -9,11 +12,11 @@ class WebSearchManager:
         try:
             self.client = DDGS()
             self._is_enabled = True
-            print("INFO: DuckDuckGo web search tool initialized successfully.")
+            logger.info("DuckDuckGo web search tool initialized successfully.")
         except Exception as e:
             self.client = None
             self._is_enabled = False
-            print(f"ERROR: Failed to initialize DuckDuckGo search tool: {e}")
+            logger.error(f"Failed to initialize DuckDuckGo search tool: {e}", exc_info=True)
 
     def is_enabled(self) -> bool:
         """Check if the web search tool is configured and enabled."""
@@ -34,7 +37,7 @@ class WebSearchManager:
             # We'll use:   {'title': '...', 'url': '...', 'content': '...'}
             return [{"title": r.get("title"), "url": r.get("href"), "content": r.get("body")} for r in results]
         except Exception as e:
-            print(f"ERROR: Web search failed for query '{query}'. Reason: {e}")
+            logger.error(f"Web search failed for query '{query}'. Reason: {e}", exc_info=True)
             return []
 
 

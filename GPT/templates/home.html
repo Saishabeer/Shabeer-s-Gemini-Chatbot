@@ -117,22 +117,17 @@
     };
 
     const renderContent = (element) => {
-        // Get the raw markdown text from the element.
         const rawMarkdown = element.textContent || '';
         if (!rawMarkdown.trim()) {
             element.textContent = 'Sorry, I couldn\'t generate a response.';
             return;
         }
-
-        // Use marked.js to convert markdown to HTML
         if (typeof marked !== 'undefined') {
             element.innerHTML = marked.parse(rawMarkdown);
         } else {
             console.error("marked.js is not loaded. Cannot render markdown.");
-            element.innerHTML = rawMarkdown.replace(/\n/g, '<br>'); // Basic fallback
+            element.innerHTML = rawMarkdown.replace(/\n/g, '<br>');
         }
-
-        // Use highlight.js to apply syntax highlighting to code blocks
         if (typeof hljs !== 'undefined') {
             element.querySelectorAll('pre code').forEach((block) => {
                 hljs.highlightBlock(block);
@@ -141,7 +136,6 @@
     };
 
     // --- Initial Page Load ---
-    // Render all existing assistant messages and scroll to the bottom.
     document.querySelectorAll('.message.assistant .message-content').forEach(renderContent);
     scrollToBottom();
 
@@ -160,7 +154,7 @@
         userMessage.className = 'message user';
         const userContent = document.createElement('div');
         userContent.className = 'message-content';
-        userContent.textContent = promptText; // Use textContent for security
+        userContent.textContent = promptText;
         userMessage.appendChild(userContent);
         messageArea.appendChild(userMessage);
         scrollToBottom();
@@ -170,7 +164,7 @@
         assistantMessage.className = 'message assistant';
         const assistantContent = document.createElement('div');
         assistantContent.className = 'message-content';
-        assistantContent.innerHTML = '<span class="thinking-indicator"></span>'; // Simple loading indicator
+        assistantContent.innerHTML = '<span class="thinking-indicator"></span>';
         assistantMessage.appendChild(assistantContent);
         messageArea.appendChild(assistantMessage);
         scrollToBottom();
@@ -195,6 +189,54 @@
                 throw new Error(`Server responded with status: ${response.status}`);
             }
 
+            // *** THIS IS THE CRITICAL NEW LOGIC ***
+            // Check for the custom header and update the URL if a new session was created.
+            const newSessionId = response.headers.get('X-Chat-Session-Id');
+            if (newSessionId) {
+                const newUrl = `/chat/${newSessionId}/`;
+                // Update the browser's URL bar without reloading the page.
+                window.history.pushState({path: newUrl}, '', newUrl);
+                // Update the form's action target for all subsequent messages.
+                promptForm.action = newUrl;
+                console.log(`New chat session created. URL updated to: ${newUrl}`);
+
+                // --- Dynamically update the sidebar ---
+                const chatList = document.querySelector('.chat-list');
+                const noChatsMessage = chatList.querySelector('li[style*="color: #888"]');
+                const csrfToken = promptForm.querySelector('input[name="csrfmiddlewaretoken"]').value;
+
+                // 1. Remove "No chats yet" message if it exists
+                if (noChatsMessage) {
+                    noChatsMessage.remove();
+                }
+
+                // 2. Deactivate any currently active chat item
+                const currentActive = chatList.querySelector('.chat-list-item.active');
+                if (currentActive) {
+                    currentActive.classList.remove('active');
+                }
+
+                // 3. Create the new list item element
+                const newChatItem = document.createElement('li');
+                newChatItem.className = 'chat-list-item active';
+
+                // 4. Create the link and the delete form using innerHTML for simplicity
+                const newChatTitle = promptText.length > 30 ? promptText.substring(0, 30) + '...' : promptText;
+                newChatItem.innerHTML = `
+                    <a href="${newUrl}">${newChatTitle}</a>
+                    <form action="/chat/delete/${newSessionId}/" method="post" class="delete-chat-form">
+                        <input type="hidden" name="csrfmiddlewaretoken" value="${csrfToken}">
+                        <button type="submit" title="Delete chat" onclick="return confirm('Are you sure you want to delete this chat?');">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                        </button>
+                    </form>
+                `;
+
+                // 5. Add the new item to the top of the list
+                chatList.prepend(newChatItem);
+            }
+            // *** END OF NEW LOGIC ***
+
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let firstChunk = true;
@@ -209,7 +251,7 @@
                 }
 
                 const textChunk = decoder.decode(value, { stream: true });
-                assistantContent.textContent += textChunk; // Append raw text for smooth typing effect
+                assistantContent.textContent += textChunk;
                 scrollToBottom();
             }
 
@@ -217,14 +259,14 @@
             console.error('Streaming or request failed:', error);
             assistantContent.textContent = 'Sorry, an error occurred while getting the response.';
         } finally {
-            // Final render of the complete message with markdown and syntax highlighting
+            // Final render of the complete message with markdown
             renderContent(assistantContent);
 
             // Re-enable form
             promptInput.disabled = false;
             sendButton.disabled = false;
             promptInput.focus();
-            scrollToBottom(); // Final scroll after content is fully rendered
+            scrollToBottom();
         }
     });
   });
