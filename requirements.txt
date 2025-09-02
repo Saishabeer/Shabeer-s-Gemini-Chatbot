@@ -1,19 +1,19 @@
 # --- Core Django & Server ---
-Django
-gunicorn
-dj-database-url
-psycopg2-binary
-python-dotenv
-whitenoise
+Django==5.2.5
+gunicorn==22.0.0
+dj-database-url==2.1.0
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+whitenoise==6.7.0
 
 # --- AI & LangChain ---
-google-generativeai
-langchain
-langchain-community
-langchain-google-genai
-chromadb
-pypdf
-unstructured
+google-generativeai==0.7.1
+langchain==0.2.5
+langchain-community==0.2.5
+langchain-google-genai==1.0.6
+chromadb==0.5.0
+pypdf==4.2.0
+unstructured==0.14.4
 
 # --- Services ---
-ddgs
+duckduckgo-search==6.1.5
