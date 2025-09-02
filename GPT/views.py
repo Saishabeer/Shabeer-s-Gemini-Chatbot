@@ -106,23 +106,23 @@ def chat_view(request, session_id=None):
 
             if not target_session:
                 target_session = ChatSession.objects.create(user=request.user, title=uploaded_file.name)
-            else:
+            # Only update the title if it's still the default 'New Chat'
+            elif target_session.title == 'New Chat':
                 target_session.title = uploaded_file.name
+                target_session.save()
 
-            # Correctly delete the old vectorstore if a new file is uploaded for an existing session.
-            # The previous logic was flawed as it checked for the file, not the vectorstore.
-            if has_vectorstore(target_session.id):
-                logger.info(f"Existing vectorstore found for session {target_session.id}. Deleting it before new ingestion.")
-                delete_vectorstore_for_session(target_session.id)
+            # --- REMOVED: The block that deletes the vector store is gone to allow appending documents. ---
 
             try:
-                # Save the file to the database
+                # Save the file content to the database.
+                # Note: This still overwrites the previous file's content in the DB,
+                # but the vector store will retain all ingested documents.
                 target_session.save_document(uploaded_file)
                 
                 # Process the document. The RAG service will handle file operations.
                 ingest_document_for_session(target_session.id)
                 
-                messages.success(request, f"✅ Ready to answer questions about '{uploaded_file.name}'.")
+                messages.success(request, f"✅ Document '{uploaded_file.name}' added to the session.")
                 
             except Exception as e:
                 logger.error(f"Error processing document for session {target_session.id}: {e}", exc_info=True)
