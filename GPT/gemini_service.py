@@ -33,7 +33,7 @@ def gemini_chat_stream(prompt: str, history: List[Dict[str, str]]) -> Iterable[s
     current_key = api_key_manager.get_current_key()
     genai.configure(api_key=current_key)
 
-    model = genai.GenerativeModel('gemini-1.5-flash-latest', safety_settings=SAFETY_SETTINGS)
+    model = genai.GenerativeModel('gemini-2.5-flash-lite', safety_settings=SAFETY_SETTINGS)
     chat = model.start_chat(history=history)
     response_stream = chat.send_message(prompt, stream=True)
 

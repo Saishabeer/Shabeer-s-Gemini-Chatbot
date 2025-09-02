@@ -19,30 +19,35 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load environment variables from .env file
-load_dotenv(BASE_DIR / '.env')
+env_path = BASE_DIR / '.env'
+if env_path.exists():
+    print(f"INFO: Loading environment variables from {env_path}")
+    load_dotenv(dotenv_path=env_path)
+else:
+    print(f"WARNING: .env file not found at {env_path}. Using default settings or expecting environment variables.")
 
 # --- Core Settings ---
 
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.getenv('SECRET_KEY', 'a-default-insecure-key-for-development-only')
+
 # SECURITY WARNING: don't run with debug turned on in production!
-# This MUST be defined before other settings that depend on it.
+# Defaults to False if not set. Recommended to set DEBUG=True in .env for local dev.
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY')
-if not SECRET_KEY:
-    if DEBUG:
-        print("WARNING: SECRET_KEY not found in .env. Using a temporary, insecure key for development.")
-        SECRET_KEY = 'temporary-insecure-key-for-development'
-    else:
-        raise ValueError("SECRET_KEY environment variable must be set in production (when DEBUG=False).")
+# --- ALLOWED_HOSTS ---
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
-# In production, set this in .env as a comma-separated string: e.g., 'yourdomain.com,www.yourdomain.com'
-ALLOWED_HOSTS = []
-raw_hosts = os.getenv('ALLOWED_HOSTS')
-if raw_hosts:
-    ALLOWED_HOSTS.extend([host.strip() for host in raw_hosts.split(',')])
-if DEBUG:
-    ALLOWED_HOSTS.extend(['127.0.0.1', 'localhost'])
+# Add hosts from environment variable (for production)
+env_hosts = os.getenv('ALLOWED_HOSTS')
+if env_hosts:
+    ALLOWED_HOSTS.extend([host.strip() for host in env_hosts.split(',')])
+
+# Add Render.com hostname for easy deployment
+RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+
 
 # Application definition
 
@@ -53,6 +58,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'whitenoise.runserver_nostatic', # For serving static files in production
 
     # Your applications
     'GPT',
@@ -60,6 +66,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware', # WhiteNoise middleware
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -73,8 +80,6 @@ ROOT_URLCONF = 'techjaysGPT.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        # Tell Django to look for templates in a 'templates' directory
-        # at the project's root level (BASE_DIR).
         'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
@@ -89,20 +94,23 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 
-
+#postgresql://techjays_gpt_db_user:oVYEQItxe0bADQyX1EE57j7EQXQQ1NPn@dpg-d2r7ca15pdvs738umn00-a.oregon-postgres.render.com/techjays_gpt_db
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# Using dj-database-url to parse a single DATABASE_URL from the environment.
-# This is a standard practice for modern Django applications and simplifies deployment.
-DATABASES = {
-    'default': dj_database_url.config(
-        # Fallback to a local SQLite DB if DATABASE_URL is not set.
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=600  # Keep connections alive for 10 minutes
-    )
-}
-
+# Use dj-database-url to configure the database from a single DATABASE_URL env var.
+# Fallback to a local SQLite database if DATABASE_URL is not set.
+if 'DATABASE_URL' in os.environ:
+    DATABASES = {
+        'default': dj_database_url.config(conn_max_age=600, ssl_require=True)
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -139,11 +147,11 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
-
-# Add a directory for your project-wide static files.
 STATICFILES_DIRS = [
     BASE_DIR / "static",
 ]
+STATIC_ROOT = BASE_DIR / 'staticfiles' # Directory for collectstatic
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -152,9 +160,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Redirect users to the 'home' view after a successful login.
 LOGIN_REDIRECT_URL = 'home'
-# If a user is not logged in, redirect them to the 'login' view.
 LOGIN_URL = 'login'
-# After logging out, redirect users back to the login page.
 LOGOUT_REDIRECT_URL = 'login'
 
 
@@ -189,3 +195,13 @@ LOGGING = {
         },
     }
 }
+
+# --- Directory Creation ---
+# Ensure that directories required by the application exist upon startup.
+# This prevents startup warnings (like for staticfiles) and runtime errors.
+for path in [
+    STATIC_ROOT,
+    MEDIA_ROOT,
+    CHROMA_DIR,
+] + STATICFILES_DIRS:
+    os.makedirs(path, exist_ok=True)
