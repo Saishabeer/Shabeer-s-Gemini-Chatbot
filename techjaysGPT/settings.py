@@ -11,9 +11,12 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import logging
 from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,10 +24,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from .env file
 env_path = BASE_DIR / '.env'
 if env_path.exists():
-    print(f"INFO: Loading environment variables from {env_path}")
+    logger.info(f"Loading environment variables from {env_path}")
     load_dotenv(dotenv_path=env_path)
 else:
-    print(f"WARNING: .env file not found at {env_path}. Using default settings or expecting environment variables.")
+    logger.warning(f".env file not found at {env_path}. Using default settings or expecting environment variables.")
 
 # --- Core Settings ---
 
