@@ -1,6 +1,7 @@
 import os
 import gc
 import logging
+import tempfile
 from django.conf import settings
 import re
 from django.contrib import messages
@@ -120,16 +121,28 @@ def chat_view(request, session_id=None):
                 logger.info(f"Existing vectorstore found for session {target_session.id}. Deleting it before new ingestion.")
                 delete_vectorstore_for_session(target_session.id)
 
-            # Store files relative to MEDIA_ROOT for consistent and easy path reconstruction.
-            # The previous logic made the path relative to a subdirectory, causing lookup failures.
-            fs = FileSystemStorage(location=settings.MEDIA_ROOT)
-            file_path = fs.save(f"user_docs/user_{request.user.id}/{uploaded_file.name}", uploaded_file)
-            target_session.document_path = file_path
-            target_session.save()
-
+            # Save file content to database
             try:
-                ingest_document_for_session(target_session.id, file_path)
+                # Save the file to the database
+                target_session.save_document(uploaded_file)
+                
+                # For processing, we'll use a temporary file
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    for chunk in uploaded_file.chunks():
+                        temp_file.write(chunk)
+                    temp_file_path = temp_file.name
+                
+                # Process the document
+                ingest_document_for_session(target_session.id, temp_file_path)
+                
+                # Clean up the temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary file {temp_file_path}: {e}")
+                
                 messages.success(request, f"✅ Ready to answer questions about '{uploaded_file.name}'.")
+                
             except Exception as e:
                 logger.error(f"Error processing document for session {target_session.id}: {e}", exc_info=True)
                 messages.error(request, f"Sorry, there was an error processing your document: {e}")

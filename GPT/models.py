@@ -70,12 +70,20 @@ class ChatSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_sessions')
     created_at = models.DateTimeField(auto_now_add=True)
     document_name = models.CharField(max_length=255, blank=True, null=True)
-    document_path = models.CharField(max_length=512, blank=True, null=True)
+    document_content = models.BinaryField(blank=True, null=True)  # Store file content
+    content_type = models.CharField(max_length=100, blank=True, null=True)  # Store file MIME type
     title = models.CharField(max_length=100, default='New Chat')
 
     def __str__(self):
-        return self.title
+        return f"{self.title} ({self.created_at.strftime('%Y-%m-%d %H:%M')})"
 
+    def save_document(self, uploaded_file):
+        """Save file content to database."""
+        self.document_name = uploaded_file.name
+        self.content_type = uploaded_file.content_type
+        self.document_content = uploaded_file.read()
+        self.save()
+        return self
 
 class ChatMessage(models.Model):
     """Represents a single message within a chat session."""

@@ -1,5 +1,7 @@
 import logging
+import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import List
 
@@ -16,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def get_gemini_embeddings():
     """Initializes and returns the GoogleGenerativeAIEmbeddings instance using the current API key."""
-    return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key_manager.get_current_key())
+    return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key_manager.get_key())
 
 
 def has_vectorstore(session_id: int) -> bool:
@@ -41,34 +43,64 @@ def ingest_document_for_session(session_id: int, file_path: str):
     """
     Loads a document, splits it into chunks, generates embeddings,
     and stores them in a persistent Chroma vector store for a specific session.
+    
+    Args:
+        session_id: The ID of the chat session
+        file_path: Path to the file or temporary file containing the content
     """
-    full_file_path = settings.MEDIA_ROOT / file_path
+    from .models import ChatSession
+    
+    # Get the chat session
+    chat_session = ChatSession.objects.get(id=session_id)
     vectorstore_path = str(settings.CHROMA_DIR / f"session_{session_id}")
-
-    # Choose loader based on file type
-    file_extension = Path(full_file_path).suffix.lower()
-    if file_extension == '.pdf':
-        loader = PyPDFLoader(str(full_file_path))
-    elif file_extension == '.txt':
-        loader = TextLoader(str(full_file_path))
+    
+    # If we have a file path (temporary file), use it, otherwise use the content from database
+    if file_path and os.path.exists(file_path):
+        # This is a temporary file path
+        full_file_path = Path(file_path)
+        file_extension = full_file_path.suffix.lower()
     else:
-        # Fallback for other types like .doc, .docx, etc.
-        loader = UnstructuredFileLoader(str(full_file_path))
+        # Get file extension from the stored document name
+        file_extension = Path(chat_session.document_name).suffix.lower() if chat_session.document_name else '.txt'
+        # Create a temporary file to store the content
+        with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+            temp_file.write(chat_session.document_content)
+            full_file_path = Path(temp_file.name)
+    
+    try:
+        # Choose loader based on file type
+        if file_extension == '.pdf':
+            loader = PyPDFLoader(str(full_file_path))
+        elif file_extension == '.txt':
+            loader = TextLoader(str(full_file_path))
+        else:
+            # Fallback for other types like .doc, .docx, etc.
+            loader = UnstructuredFileLoader(str(full_file_path))
 
-    documents = loader.load()
+        documents = loader.load()
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = text_splitter.split_documents(documents)
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = text_splitter.split_documents(documents)
+        embedding_function = get_gemini_embeddings()
 
-    embedding_function = get_gemini_embeddings()
-
-    logger.info(f"Creating vector store for session {session_id} with {len(chunks)} chunks.")
-    Chroma.from_documents(
-        chunks,
-        embedding_function,
-        persist_directory=vectorstore_path
-    )
-    logger.info(f"Vector store created successfully for session {session_id} at {vectorstore_path}")
+        logger.info(f"Creating vector store for session {session_id} with {len(chunks)} chunks.")
+        Chroma.from_documents(
+            documents=chunks,
+            embedding=embedding_function,
+            persist_directory=vectorstore_path
+        )
+        logger.info(f"Vector store created successfully for session {session_id} at {vectorstore_path}")
+        
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}", exc_info=True)
+        raise
+    finally:
+        # Clean up temporary file if it was created from database content
+        if not (file_path and os.path.exists(file_path)) and 'full_file_path' in locals():
+            try:
+                os.unlink(str(full_file_path))
+            except Exception as e:
+                logger.warning(f"Could not delete temporary file {full_file_path}: {e}")
 
 
 @with_api_key_rotation
