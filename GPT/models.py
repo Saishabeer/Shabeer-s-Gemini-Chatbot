@@ -96,6 +96,7 @@ class ChatMessage(models.Model):
     role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     content = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.get_role_display()}: {self.content[:50]}"

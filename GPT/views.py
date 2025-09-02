@@ -1,17 +1,14 @@
-import os
 import gc
 import logging
+import os
 import tempfile
-from django.conf import settings
-import re
+
 from django.contrib import messages
-from django.contrib.auth import authenticate, login, logout, get_user_model
+from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required
-from django.core.files.storage import FileSystemStorage
 from django.http import StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
-from google.api_core.exceptions import (InvalidArgument, PermissionDenied, ResourceExhausted)
-from langchain_google_genai._common import GoogleGenerativeAIError
+from google.api_core.exceptions import InvalidArgument, PermissionDenied, ResourceExhausted
 
 from .forms import UserRegistrationForm, UserLoginForm
 from .gemini_service import gemini_chat_stream
@@ -22,6 +19,7 @@ from .rag_service import (
     has_vectorstore,
     ingest_document_for_session
 )
+from langchain_google_genai._common import GoogleGenerativeAIError
 from .web_search_service import web_search_manager
 
 # --- Basic Setup ---
@@ -54,22 +52,18 @@ def user_login(request):
     if request.method == 'POST':
         form = UserLoginForm(request, data=request.POST)
         if form.is_valid():
-            email = form.cleaned_data.get('username')  # This is the email field
+            email = form.cleaned_data.get('username').lower().strip()
             password = form.cleaned_data.get('password')
-            
-            # Normalize email to lowercase
-            email = email.lower().strip()
             
             # Try to authenticate the user
             user = authenticate(request, username=email, password=password)
             
             if user is not None:
-                # Authentication successful
                 login(request, user)
                 next_url = request.GET.get('next', 'home')
                 return redirect(next_url)
             else:
-                # Check if email exists to show appropriate message
+                # This logic is now safe because `email` is defined.
                 if User.objects.filter(email__iexact=email).exists():
                     messages.error(request, 'Invalid password. Please try again.')
                 else:
@@ -121,25 +115,12 @@ def chat_view(request, session_id=None):
                 logger.info(f"Existing vectorstore found for session {target_session.id}. Deleting it before new ingestion.")
                 delete_vectorstore_for_session(target_session.id)
 
-            # Save file content to database
             try:
                 # Save the file to the database
                 target_session.save_document(uploaded_file)
                 
-                # For processing, we'll use a temporary file
-                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                    for chunk in uploaded_file.chunks():
-                        temp_file.write(chunk)
-                    temp_file_path = temp_file.name
-                
-                # Process the document
-                ingest_document_for_session(target_session.id, temp_file_path)
-                
-                # Clean up the temporary file
-                try:
-                    os.unlink(temp_file_path)
-                except Exception as e:
-                    logger.warning(f"Could not delete temporary file {temp_file_path}: {e}")
+                # Process the document. The RAG service will handle file operations.
+                ingest_document_for_session(target_session.id)
                 
                 messages.success(request, f"✅ Ready to answer questions about '{uploaded_file.name}'.")
                 
@@ -148,8 +129,6 @@ def chat_view(request, session_id=None):
                 messages.error(request, f"Sorry, there was an error processing your document: {e}")
                 target_session.delete()
                 return redirect('home')
-            finally:
-                gc.collect()
 
             return redirect('chat_session', session_id=target_session.id)
 

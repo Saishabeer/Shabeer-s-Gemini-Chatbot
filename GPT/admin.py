@@ -6,7 +6,7 @@ from .models import ChatSession, ChatMessage
 class ChatSessionAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'created_at')
     list_filter = ('user', 'created_at')
-    search_fields = ('user__username',)
+    search_fields = ('user__email',)
     date_hierarchy = 'created_at'
 
 

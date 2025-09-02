@@ -41,7 +41,7 @@ def delete_vectorstore_for_session(session_id: int):
 
 
 @with_api_key_rotation
-def ingest_document_for_session(session_id: int, file_path: str):
+def ingest_document_for_session(session_id: int, file_path: str = None):
     """
     Loads a document, splits it into chunks, generates embeddings,
     and stores them in a persistent Chroma vector store for a specific session.
