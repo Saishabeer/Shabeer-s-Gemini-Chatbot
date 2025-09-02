@@ -1,7 +1,5 @@
 import gc
 import logging
-import os
-import tempfile
 
 from django.contrib import messages
 from django.contrib.auth import authenticate, get_user_model, login, logout
@@ -63,14 +61,11 @@ def user_login(request):
                 next_url = request.GET.get('next', 'home')
                 return redirect(next_url)
             else:
-                # This logic is now safe because `email` is defined.
-                if User.objects.filter(email__iexact=email).exists():
-                    messages.error(request, 'Invalid password. Please try again.')
-                else:
-                    messages.error(request, 'No account found with this email. Please register first.')
+                # Provide a generic error message to avoid user enumeration (revealing if an email is registered).
+                messages.error(request, 'Invalid email or password. Please try again.')
     else:
         form = UserLoginForm()
-    
+    messages.error(request, 'Invalid email or password. Please try again.')
     return render(request, 'login.html', {'form': form})
 
 
@@ -223,24 +218,31 @@ Standalone Question:"""
 
                     # 3. Build Final Prompt
                     if doc_context or web_context:
-                        system_instruction = """You are Gemini Code Assist, a world-class software engineering coding assistant. Your primary goal is to provide clear, accurate, and well-formatted answers.
+                        system_instruction = """**📖 Role & Personality**
+You are a friendly, helpful, and conversational AI assistant 🤖✨.
+You always respond in a clear, approachable, and warm tone.
+Use emojis to make conversations engaging 🎉🔥, but don’t overdo it.
+Highlight important parts with quotes or markdown headings.
 
-**Instructions:**
-- Use the provided context to answer the user's question. Prioritize 'UPLOADED DOCUMENT CONTEXT', then 'WEB SEARCH RESULTS'.
-- Format your answers clearly. Use lists, bold text, and paragraphs to make the response easy to read.
-- **MANDATORY Code Formatting:** When you are asked to write code, you MUST enclose the entire code block in triple backticks, specifying the language. This is not optional.
+**📚 Knowledge Sources & Context**
+Your knowledge comes from three places. You must use the provided context when it's available.
+1.  **RAG (Uploaded Documents):** When I provide `--- UPLOADED DOCUMENT CONTEXT ---`, you MUST prioritize this information. Mention that your answer is based on the document.
+2.  **Web Search:** When I provide `--- WEB SEARCH RESULTS ---`, use it for up-to-date information.
+3.  **Internal Knowledge:** Use your pre-trained knowledge for general questions or when no other context is provided.
 
-    **Correct Example:**
-    ```python
-    def hello_world():
-        print("Hello, World!")
-    ```
+**🧠 Conversational Memory**
+Keep track of the current conversation to keep answers relevant. Remember user preferences and past topics across sessions to create a personalized experience. For example, if the user mentioned learning Java, you can refer to it in future chats.
 
-    **Incorrect Example:**
-    def hello_world():
-        print("Hello, World!")
+**💬 Response Style**
+- Begin with a friendly greeting (e.g., "Hey there! 👋").
+- Structure your answers with bold headings. **Do not use** hash characters like `#`, `##`, or `###`.
+- Use bullets and short paragraphs for clarity.
+- End with a positive and helpful closing remark (e.g., "Hope this clears things up! 🚀").
 
-- Provide explanations before or after the code block, but the code itself must be inside the formatted block."""
+**💻 Flawless Code Snippets**
+- This is **MANDATORY**: All code blocks MUST be enclosed in triple backticks with the language specified (e.g., ```python).
+- Provide clear explanations before or after the code, but never mix explanations inside the code block itself.
+"""
                         context_parts = [system_instruction]
                         if doc_context:
                             context_parts.append(f"--- UPLOADED DOCUMENT CONTEXT ---\n{doc_context}")

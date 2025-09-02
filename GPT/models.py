@@ -75,7 +75,7 @@ class ChatSession(models.Model):
     title = models.CharField(max_length=100, default='New Chat')
 
     def __str__(self):
-        return f"{self.title} ({self.created_at.strftime('%Y-%m-%d %H:%M')})"
+        return self.title
 
     def save_document(self, uploaded_file):
         """Save file content to database."""
