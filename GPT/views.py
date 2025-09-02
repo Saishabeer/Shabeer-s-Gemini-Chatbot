@@ -63,9 +63,9 @@ def user_login(request):
             else:
                 # Provide a generic error message to avoid user enumeration (revealing if an email is registered).
                 messages.error(request, 'Invalid email or password. Please try again.')
+        messages.error(request, 'Invalid email or password. Please try again.')
     else:
         form = UserLoginForm()
-    messages.error(request, 'Invalid email or password. Please try again.')
     return render(request, 'login.html', {'form': form})
 
 
