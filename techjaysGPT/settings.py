@@ -98,19 +98,16 @@ WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# Use dj-database-url to configure the database from a single DATABASE_URL env var.
-# Fallback to a local SQLite database if DATABASE_URL is not set.
-if 'DATABASE_URL' in os.environ:
-    DATABASES = {
-        'default': dj_database_url.config(conn_max_age=600, ssl_require=True)
-    }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+# Using dj-database-url to parse a single DATABASE_URL from the environment.
+# This is a standard practice for modern Django applications and simplifies deployment.
+DATABASES = {
+    'default': dj_database_url.config(
+        # Fallback to a local SQLite DB if DATABASE_URL is not set.
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,  # Keep connections alive for 10 minutes
+        ssl_require=not DEBUG # Enable SSL for production DB, disable for local SQLite.
+    )
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -171,11 +168,19 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Chroma persistent directory (per-session subfolders will be created)
 CHROMA_DIR = BASE_DIR / 'chroma'
 
+# --- Production Security Settings ---
+# These settings are enabled when DEBUG is False.
+SECURE_SSL_REDIRECT = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+# For HSTS, start with a low value and increase once you confirm it works.
+SECURE_HSTS_SECONDS = 2592000  # 30 days
+
 # Logging Configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'formatters': {
+    'formatters': { 
         'verbose': {
             'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
             'datefmt': '%d/%b/%Y %H:%M:%S'

@@ -153,8 +153,6 @@ def chat_view(request, session_id=None):
                 messages.error(request, f"Sorry, there was an error processing your document: {e}")
                 target_session.delete()
                 return redirect('home')
-            finally:
-                gc.collect()
 
             return redirect('chat_session', session_id=target_session.id)
 
@@ -294,7 +292,6 @@ Standalone Question:"""
                     response_text = "".join(full_response).strip()
                     if response_text:
                         ChatMessage.objects.create(session=target_session, role='assistant', content=response_text)
-                    gc.collect()
 
             response = StreamingHttpResponse(stream_response_generator(), content_type="text/plain")
             if is_new_session:
