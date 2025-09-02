@@ -5,6 +5,8 @@ import tempfile
 from pathlib import Path
 from typing import List
 
+from langchain.schema import Document
+
 from django.conf import settings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredFileLoader
@@ -68,16 +70,38 @@ def ingest_document_for_session(session_id: int, file_path: str):
             full_file_path = Path(temp_file.name)
     
     try:
+        # Ensure the file exists and has content
+        if not full_file_path.exists() or os.path.getsize(full_file_path) == 0:
+            raise ValueError("The uploaded file is empty or could not be read.")
+            
         # Choose loader based on file type
+        file_extension = file_extension.lower()
+        logger.info(f"Processing file: {full_file_path} with extension: {file_extension}")
+        
         if file_extension == '.pdf':
             loader = PyPDFLoader(str(full_file_path))
+            documents = loader.load()
         elif file_extension == '.txt':
-            loader = TextLoader(str(full_file_path))
+            # For text files, ensure proper encoding
+            try:
+                with open(full_file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                documents = [Document(page_content=content)]
+            except UnicodeDecodeError:
+                # Fallback to different encoding if utf-8 fails
+                with open(full_file_path, 'r', encoding='latin-1') as f:
+                    content = f.read()
+                documents = [Document(page_content=content)]
         else:
-            # Fallback for other types like .doc, .docx, etc.
-            loader = UnstructuredFileLoader(str(full_file_path))
-
-        documents = loader.load()
+            # For other file types, try UnstructuredFileLoader
+            try:
+                loader = UnstructuredFileLoader(str(full_file_path))
+                documents = loader.load()
+            except Exception as e:
+                raise ValueError(f"Unsupported file type: {file_extension}. Please upload a .txt or .pdf file.")
+        
+        if not documents or not any(doc.page_content.strip() for doc in documents):
+            raise ValueError("The uploaded file appears to be empty or could not be processed.")
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_documents(documents)
 
