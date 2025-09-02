@@ -1,41 +1,49 @@
 import logging
-from typing import Dict, Iterable, List
-
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from typing import Iterable, List, Dict
 
 from .utils import api_key_manager, with_api_key_rotation
 
 logger = logging.getLogger(__name__)
 
-# Configure safety settings to be less restrictive for a general-purpose chatbot.
-# Adjust these as needed for your specific use case.
-SAFETY_SETTINGS = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+# --- Model Configuration ---
+# These settings can be adjusted to control the model's behavior.
+generation_config = {
+    "temperature": 0.9,
+    "top_p": 1,
+    "top_k": 1,
+    "max_output_tokens": 8192,
 }
+
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+]
 
 
 @with_api_key_rotation
-def gemini_chat_stream(prompt: str, history: List[Dict[str, str]]) -> Iterable[str]:
+def gemini_chat_stream(prompt: str, history: List[Dict]) -> Iterable[str]:
     """
-    Generates a response from the Gemini model in a stream, with automatic API key rotation.
-
-    This function is decorated with `with_api_key_rotation`, which handles retries
-    with different API keys upon encountering quota or permission errors.
+    Generates content from the Gemini model with streaming and API key rotation.
+    This function is decorated to automatically handle API key errors.
     """
     logger.info("Attempting to generate content with Gemini API.")
     
-    # This function will be re-executed by the decorator on failure,
-    # so we get the current (potentially new) key on each attempt.
-    current_key = api_key_manager.get_current_key()
+    # Get the current API key from the manager
+    current_key = api_key_manager.get_key()
     genai.configure(api_key=current_key)
 
-    model = genai.GenerativeModel('gemini-2.5-flash-lite', safety_settings=SAFETY_SETTINGS)
-    chat = model.start_chat(history=history)
-    response_stream = chat.send_message(prompt, stream=True)
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash-lite",
+        generation_config=generation_config,
+        safety_settings=safety_settings
+    )
 
-    for chunk in response_stream:
-        yield chunk.text
+    chat_session = model.start_chat(history=history)
+    response = chat_session.send_message(prompt, stream=True)
+
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text

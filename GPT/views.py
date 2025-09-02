@@ -34,11 +34,13 @@ def register(request):
     if request.method == "POST":
         form = UserRegistrationForm(request.POST)
         if form.is_valid():
-            # The form's save method now handles password hashing and saving.
-            user = form.save()
+            user = form.save(commit=False)
+            user.set_password(form.cleaned_data['password'])
+            user.save()
 
             # After successful creation, log the user in.
-            # Since we didn't use `authenticate()`,
+            # The login() function requires the user object to have a `backend` attribute.
+            # Since we created the user manually and didn't use `authenticate()`,
             # we must specify the authentication backend path.
             login(request, user, backend='django.contrib.auth.backends.ModelBackend')
 
@@ -46,16 +48,8 @@ def register(request):
             return redirect('home')
         else:
             # If the form is invalid, inform the user so they look for field-specific errors
-            # by iterating through the form's errors and adding them to the messages framework.
-            # This provides explicit feedback even if the template doesn't render form errors.
-            for field, error_list in form.errors.items():
-                for error in error_list:
-                    # Prepend the field label for clarity. '__all__' is for non-field errors.
-                    if field == '__all__':
-                        messages.error(request, error)
-                    else:
-                        label = form.fields[field].label or field.capitalize()
-                        messages.error(request, f"{label}: {error}")
+            # that Django's form rendering will display.
+            messages.error(request, "Registration failed. Please correct the errors highlighted below.")
     else:
         form = UserRegistrationForm()
     return render(request, 'register.html', {'form': form})
@@ -66,32 +60,26 @@ def user_login(request):
     if request.method == "POST":
         form = UserLoginForm(request, data=request.POST)
         if form.is_valid():
-            login_identifier = form.cleaned_data.get('username')
+            username = form.cleaned_data.get('username')
             password = form.cleaned_data.get('password')
 
-            # The form's 'username' field can be either a username or an email.
-            # We first try to authenticate assuming it's a username.
-            user = authenticate(request, username=login_identifier, password=password)
+            # Try normal username login
+            user = authenticate(request, username=username, password=password)
 
-            # If that fails and it looks like an email, we find the user by email
-            # and then try to authenticate with their actual username.
-            if user is None and '@' in login_identifier:
+            # Try email login if username fails
+            if user is None and '@' in username:
                 try:
-                    user_obj = User.objects.get(email__iexact=login_identifier)
-                    user = authenticate(request, username=user_obj.username, password=password)
+                    user_by_email = User.objects.get(email=username)
+                    user = authenticate(request, username=user_by_email.username, password=password)
                 except User.DoesNotExist:
-                    user = None # User with this email does not exist.
+                    pass
 
             if user:
                 login(request, user)
                 return redirect('home')
-
-            # If authentication fails after all attempts, show a clear error.
-            messages.error(request, "Invalid credentials. Please check your username/email and password.")
+            messages.error(request, "Invalid username/email or password.")
         else:
-            # If the form itself is invalid (e.g., empty fields), show a generic error.
-            # The form will display field-specific errors in the template.
-            messages.error(request, "There was an error with your submission.")
+            messages.error(request, "Invalid username/email or password.")
     else:
         form = UserLoginForm()
     return render(request, "login.html", {'form': form})
@@ -153,6 +141,8 @@ def chat_view(request, session_id=None):
                 messages.error(request, f"Sorry, there was an error processing your document: {e}")
                 target_session.delete()
                 return redirect('home')
+            finally:
+                gc.collect()
 
             return redirect('chat_session', session_id=target_session.id)
 
@@ -292,6 +282,7 @@ Standalone Question:"""
                     response_text = "".join(full_response).strip()
                     if response_text:
                         ChatMessage.objects.create(session=target_session, role='assistant', content=response_text)
+                    gc.collect()
 
             response = StreamingHttpResponse(stream_response_generator(), content_type="text/plain")
             if is_new_session:
