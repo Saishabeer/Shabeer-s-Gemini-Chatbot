@@ -64,6 +64,9 @@ INSTALLED_APPS = [
     'GPT',
 ]
 
+# Custom user model
+AUTH_USER_MODEL = 'GPT.User'
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware', # WhiteNoise middleware
@@ -94,19 +97,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 
-#postgresql://techjays_gpt_db_user:oVYEQItxe0bADQyX1EE57j7EQXQQ1NPn@dpg-d2r7ca15pdvs738umn00-a.oregon-postgres.render.com/techjays_gpt_db
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# Using dj-database-url to parse a single DATABASE_URL from the environment.
-# This is a standard practice for modern Django applications and simplifies deployment.
 DATABASES = {
-    'default': dj_database_url.config(
-        # Fallback to a local SQLite DB if DATABASE_URL is not set.
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=600,  # Keep connections alive for 10 minutes
-        ssl_require=not DEBUG # Enable SSL for production DB, disable for local SQLite.
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
 }
 
 # Password validation

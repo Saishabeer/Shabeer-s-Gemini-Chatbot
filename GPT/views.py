@@ -34,55 +34,49 @@ def register(request):
     if request.method == "POST":
         form = UserRegistrationForm(request.POST)
         if form.is_valid():
-            user = form.save(commit=False)
-            user.set_password(form.cleaned_data['password'])
-            user.save()
-
-            # After successful creation, log the user in.
-            # The login() function requires the user object to have a `backend` attribute.
-            # Since we created the user manually and didn't use `authenticate()`,
-            # we must specify the authentication backend path.
-            login(request, user, backend='django.contrib.auth.backends.ModelBackend')
-
-            messages.success(request, "Registration successful! Welcome.")
-            return redirect('home')
-        else:
-            # If the form is invalid, inform the user so they look for field-specific errors
-            # that Django's form rendering will display.
-            messages.error(request, "Registration failed. Please correct the errors highlighted below.")
+            try:
+                user = form.save()
+                login(request, user)
+                messages.success(request, 'Registration successful! Welcome to TechJays GPT.')
+                return redirect('home')
+            except Exception as e:
+                messages.error(request, f'An error occurred during registration: {str(e)}')
+        # If form is invalid, let the template handle the form errors
     else:
         form = UserRegistrationForm()
+    
     return render(request, 'register.html', {'form': form})
 
 
 def user_login(request):
-    """Handles user login (supports username or email)."""
-    if request.method == "POST":
+    """Handle user login with email and password."""
+    if request.method == 'POST':
         form = UserLoginForm(request, data=request.POST)
         if form.is_valid():
-            username = form.cleaned_data.get('username')
+            email = form.cleaned_data.get('username')  # This is the email field
             password = form.cleaned_data.get('password')
-
-            # Try normal username login
-            user = authenticate(request, username=username, password=password)
-
-            # Try email login if username fails
-            if user is None and '@' in username:
-                try:
-                    user_by_email = User.objects.get(email=username)
-                    user = authenticate(request, username=user_by_email.username, password=password)
-                except User.DoesNotExist:
-                    pass
-
-            if user:
+            
+            # Normalize email to lowercase
+            email = email.lower().strip()
+            
+            # Try to authenticate the user
+            user = authenticate(request, username=email, password=password)
+            
+            if user is not None:
+                # Authentication successful
                 login(request, user)
-                return redirect('home')
-            messages.error(request, "Invalid username/email or password.")
-        else:
-            messages.error(request, "Invalid username/email or password.")
+                next_url = request.GET.get('next', 'home')
+                return redirect(next_url)
+            else:
+                # Check if email exists to show appropriate message
+                if User.objects.filter(email__iexact=email).exists():
+                    messages.error(request, 'Invalid password. Please try again.')
+                else:
+                    messages.error(request, 'No account found with this email. Please register first.')
     else:
         form = UserLoginForm()
-    return render(request, "login.html", {'form': form})
+    
+    return render(request, 'login.html', {'form': form})
 
 
 def user_logout(request):

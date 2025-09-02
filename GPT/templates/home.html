@@ -32,7 +32,7 @@
 
     <footer class="sidebar-footer">
       <div class="user-info">
-        <span>{{ user.username }}</span>
+        <span>{% if user.username %}{{ user.username }}{% else %}{{ user.email }}{% endif %}</span>
         {# Use a form for logout to send a POST request, which is more secure and required by default in Django #}
         <form action="{% url 'logout' %}" method="post">
           {% csrf_token %}
