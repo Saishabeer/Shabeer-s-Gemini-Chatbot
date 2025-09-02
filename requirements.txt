@@ -1,9 +1,19 @@
-django
+# --- Core Django & Server ---
+Django
+gunicorn
+dj-database-url
+psycopg2-binary
 python-dotenv
+whitenoise
+
+# --- AI & LangChain ---
 google-generativeai
-langchain>=0.2
-langchain-community>=0.2
-langchain-google-genai>=1.0.3
-chromadb>=0.5
+langchain
+langchain-community
+langchain-google-genai
+chromadb
 pypdf
-docx2txt
+unstructured
+
+# --- Services ---
+ddgs
