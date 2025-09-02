@@ -122,7 +122,12 @@ def chat_view(request, session_id=None):
                 # Process the document. The RAG service will handle file operations.
                 ingest_document_for_session(target_session.id)
                 
-                messages.success(request, f"✅ Document '{uploaded_file.name}' added to the session.")
+                # Create a system message to record the file upload in the chat history
+                ChatMessage.objects.create(
+                    session=target_session,
+                    role='system',
+                    content=f"Document '{uploaded_file.name}' was uploaded and is ready for questions."
+                )
                 
             except Exception as e:
                 logger.error(f"Error processing document for session {target_session.id}: {e}", exc_info=True)

@@ -434,6 +434,21 @@ html.dark-theme #theme-icon-moon {
     border-bottom-left-radius: 4px;
 }
 
+.message.system {
+    justify-content: center; /* Center the message block */
+    margin: 20px auto;
+    max-width: 80%;
+    color: var(--text-tertiary);
+    font-size: 0.85em;
+}
+
+.message.system .message-content {
+    background: none;
+    border: 1px dashed var(--border-input);
+    padding: 8px 15px;
+    text-align: center;
+}
+
 .prompt-form {
     display: flex;
     padding: 20px;
