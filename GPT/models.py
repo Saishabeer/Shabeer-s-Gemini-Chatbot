@@ -7,29 +7,51 @@ class UserManager(BaseUserManager):
     use_in_migrations = True
 
     def _create_user(self, email, password, **extra_fields):
+        """
+                A private helper method to create and save a user with the given email and password.
+                It's used by both create_user and create_superuser.
+                """
+        # 1. Check if an email was provided. If not, raise an error.
         if not email:
             raise ValueError('The Email must be set')
+
+        # 2. Normalize the email (e.g., converts the domain part to lowercase).
         email = self.normalize_email(email)
+        # 3. Create a new user instance.
         user = self.model(email=email, **extra_fields)
+        # 4. Set the password. This correctly hashes the password for security.
         user.set_password(password)
+        # 5. Save the user object to the database.
         user.save(using=self._db)
         return user
 
     def create_user(self, email, password=None, **extra_fields):
+        """
+        Public method to create a regular user.
+        """
+        # Sets default values for a regular user. They are not staff or superusers.
         extra_fields.setdefault('is_staff', False)
         extra_fields.setdefault('is_superuser', False)
+        # Calls the internal _create_user method to do the actual work.
         return self._create_user(email, password, **extra_fields)
 
     def create_superuser(self, email, password, **extra_fields):
+        """
+        Public method to create a superuser (admin).
+        """
+        # Sets default values for a superuser. They must be staff and a superuser.
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
 
+        # Adds extra validation to ensure a superuser has the correct permissions.
         if extra_fields.get('is_staff') is not True:
             raise ValueError('Superuser must have is_staff=True.')
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
 
+        # Calls the internal _create_user method to create the superuser.
         return self._create_user(email, password, **extra_fields)
+
 
 class User(AbstractUser):
     """Custom user model that uses email as the unique identifier."""

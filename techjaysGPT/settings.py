@@ -9,70 +9,92 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+# --- Imports ---
+# os: For interacting with the operating system, used here to get environment variables.
 import os
+# logging: To configure and use logging throughout the application.
 import logging
+# pathlib.Path: Provides an object-oriented way to handle filesystem paths.
 from pathlib import Path
+# dj_database_url: A utility to configure the database from a single URL string (useful for production).
 import dj_database_url
+# dotenv: To load environment variables from a .env file for local development.
 from dotenv import load_dotenv
 
+# Get a logger instance for this module.
 logger = logging.getLogger(__name__)
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# --- Path Configuration ---
+# BASE_DIR points to the project's root directory (the one containing 'manage.py').
+# All other paths will be relative to this to make the project portable.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load environment variables from .env file
+# --- Environment Variable Loading ---
+# This block loads sensitive settings (like API keys, SECRET_KEY) from a .env file.
+# This is a best practice to keep secrets out of version control (e.g., Git).
 env_path = BASE_DIR / '.env'
 if env_path.exists():
+    # If the .env file is found, load it.
     logger.info(f"Loading environment variables from {env_path}")
     load_dotenv(dotenv_path=env_path)
 else:
+    # If not found, log a warning. In production, variables are usually set directly in the environment.
     logger.warning(f".env file not found at {env_path}. Using default settings or expecting environment variables.")
 
 # --- Core Settings ---
 
-# SECURITY WARNING: keep the secret key used in production secret!
+# SECRET_KEY: A long, random string used for cryptographic signing (e.g., sessions, password resets).
+# It's critical that this is kept secret in production.
+# It's loaded from the environment, with a default insecure key for development only.
 SECRET_KEY = os.getenv('SECRET_KEY', 'a-default-insecure-key-for-development-only')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-# Defaults to False if not set. Recommended to set DEBUG=True in .env for local dev.
+# DEBUG: A boolean that toggles debug mode.
+# When True, Django shows detailed error pages.
+# This MUST be False in a production environment for security reasons.
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # --- ALLOWED_HOSTS ---
+# A list of strings representing the host/domain names that this Django site can serve.
+# This is a security measure to prevent HTTP Host header attacks.
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
-# Add hosts from environment variable (for production)
+# For production, add allowed hosts from an environment variable (e.g., 'www.example.com,api.example.com').
 env_hosts = os.getenv('ALLOWED_HOSTS')
 if env_hosts:
     ALLOWED_HOSTS.extend([host.strip() for host in env_hosts.split(',')])
 
-# Add Render.com hostname for easy deployment
+# For easy deployment on platforms like Render, automatically add the provided hostname.
 RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 
-# Application definition
-
+# --- Application Definition ---
+# INSTALLED_APPS lists all Django applications that are activated in this project.
 INSTALLED_APPS = [
+    # Django's built-in apps
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'whitenoise.runserver_nostatic', # For serving static files in production
+    'whitenoise.runserver_nostatic', # Makes the dev server behave more like production for static files.
 
-    # Your applications
+    # Your local applications
     'GPT',
 ]
 
-# Custom user model
+# AUTH_USER_MODEL: Tells Django to use your custom User model instead of the default one.
+# This is crucial for using email as the username.
 AUTH_USER_MODEL = 'GPT.User'
 
+# --- Middleware Configuration ---
+# Middleware is a framework of hooks into Django's request/response processing.
+# Each middleware component has a specific purpose. The order is important.
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', # WhiteNoise middleware
+    'whitenoise.middleware.WhiteNoiseMiddleware', # Serves static files efficiently in production.
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -81,15 +103,20 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# ROOT_URLCONF: The path to the root URL configuration module for the project.
 ROOT_URLCONF = 'techjaysGPT.urls'
 
+# --- Template Configuration ---
+# Configures how Django finds and renders HTML templates.
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        # DIRS: A list of directories where Django should look for templates.
         'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                # These make certain variables available in all templates.
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -98,21 +125,22 @@ TEMPLATES = [
     },
 ]
 
+# WSGI_APPLICATION: The entry-point for WSGI-compatible web servers to serve your project.
 WSGI_APPLICATION = 'techjaysGPT.wsgi.application'
 
-# Database
+# --- Database Configuration ---
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
 DATABASES = {
     'default': {
+        # Using SQLite for simplicity in local development.
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
 
-# Password validation
+# --- Password Validation ---
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
+# A list of validators used to check the strength of users' passwords.
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -129,9 +157,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-# Internationalization
+# --- Internationalization ---
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'UTC'
@@ -141,54 +168,72 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
+# --- Static Files (CSS, JavaScript, Images) ---
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
+# STATIC_URL: The URL to use when referring to static files located in STATIC_ROOT.
 STATIC_URL = 'static/'
+# STATICFILES_DIRS: A list of directories where Django will look for static files
+# in addition to the 'static' subdirectories of each app.
 STATICFILES_DIRS = [
     BASE_DIR / "static",
 ]
-STATIC_ROOT = BASE_DIR / 'staticfiles' # Directory for collectstatic
+# STATIC_ROOT: The absolute path to the directory where `collectstatic` will collect
+# all static files for deployment.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+# STATICFILES_STORAGE: The file storage engine to use for static files.
+# WhiteNoise's storage adds compression and caching support.
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Default primary key field type
+# --- Default Primary Key Field Type ---
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Redirect users to the 'home' view after a successful login.
+# --- Authentication URLs ---
+# LOGIN_REDIRECT_URL: The URL to redirect to after a successful login if no 'next' parameter is present.
 LOGIN_REDIRECT_URL = 'home'
+# LOGIN_URL: The URL where requests are redirected for login, especially by the @login_required decorator.
 LOGIN_URL = 'login'
+# LOGOUT_REDIRECT_URL: The URL to redirect to after a user logs out.
 LOGOUT_REDIRECT_URL = 'login'
 
 
-# Media (for uploaded docs)
+# --- Media Files (User-uploaded content) ---
+# MEDIA_URL: URL that handles media served from MEDIA_ROOT.
 MEDIA_URL = '/media/'
+# MEDIA_ROOT: Absolute filesystem path to the directory that will hold user-uploaded files.
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# Chroma persistent directory (per-session subfolders will be created)
+# --- Custom Application Settings ---
+# CHROMA_DIR: A custom setting defining the root directory for ChromaDB vector stores.
 CHROMA_DIR = BASE_DIR / 'chroma'
 
 # --- Production Security Settings ---
-# These settings are enabled when DEBUG is False.
+# These settings are automatically enabled when DEBUG is False to enhance security.
+# SECURE_SSL_REDIRECT: Redirects all non-HTTPS requests to HTTPS.
 SECURE_SSL_REDIRECT = not DEBUG
+# SESSION_COOKIE_SECURE: Ensures the session cookie is only sent over HTTPS.
 SESSION_COOKIE_SECURE = not DEBUG
+# CSRF_COOKIE_SECURE: Ensures the CSRF cookie is only sent over HTTPS.
 CSRF_COOKIE_SECURE = not DEBUG
-# For HSTS, start with a low value and increase once you confirm it works.
+# SECURE_HSTS_SECONDS: Tells browsers to only access the site via HTTPS for the specified duration.
 SECURE_HSTS_SECONDS = 2592000  # 30 days
 
-# Logging Configuration
+# --- Logging Configuration ---
+# This configures how the application logs events, errors, and other information.
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': { 
         'verbose': {
+            # Defines a detailed log format.
             'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
             'datefmt': '%d/%b/%Y %H:%M:%S'
         },
     },
     'handlers': {
         'console': {
+            # Defines a handler to output logs to the console.
             'level': 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'verbose'
@@ -196,15 +241,16 @@ LOGGING = {
     },
     'loggers': {
         'GPT': {
+            # Configures the logger for your 'GPT' application.
             'handlers': ['console'],
             'level': 'INFO',
         },
     }
 }
 
-# --- Directory Creation ---
+# --- Startup Directory Creation ---
 # Ensure that directories required by the application exist upon startup.
-# This prevents startup warnings (like for staticfiles) and runtime errors.
+# This is a good practice to prevent runtime errors if a directory is missing.
 for path in [
     STATIC_ROOT,
     MEDIA_ROOT,
