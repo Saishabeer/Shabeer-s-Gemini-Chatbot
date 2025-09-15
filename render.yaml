@@ -1,0 +1,36 @@
+services:
+  # This defines your main web application service.
+  - type: web
+    name: techjays-gpt
+    # Tells Render to use the Dockerfile in your repository.
+    env: docker
+    # The command to run after a successful build. It runs migrations and then starts the Gunicorn server.
+    startCommand: "python manage.py migrate && gunicorn techjaysGPT.wsgi:application"
+    # Defines a persistent disk for your ChromaDB vector stores.
+    disks:
+      - name: chroma-data
+        mountPath: /var/data/chroma
+        sizeGB: 1 # Adjust size as needed.
+    envVars:
+      - key: DATABASE_URL
+        # Automatically gets the connection string from the database service defined below.
+        fromDatabase:
+          name: techjays-gpt-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true # Render will generate a secure, random secret key.
+      - key: WEB_CONCURRENCY
+        value: 4 # A good starting point for Gunicorn workers.
+      - key: GEMINI_API_KEYS
+        sync: false # IMPORTANT: This marks the variable as a secret to be set in the Render dashboard.
+      - key: DEBUG
+        value: 0 # Disables debug mode in production.
+      - key: RENDER
+        value: "1" # Lets your settings.py know it's running on Render.
+
+# This defines your PostgreSQL database service.
+databases:
+  - name: techjays-gpt-db
+    databaseName: techjays_gpt_db
+    user: techjays_gpt_user
+    plan: free # Or your desired plan.
