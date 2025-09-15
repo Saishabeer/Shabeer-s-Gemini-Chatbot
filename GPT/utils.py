@@ -7,7 +7,7 @@ from threading import Lock
 # --- Third-Party Library Imports ---
 # Specific exceptions from Google's API client and LangChain's wrapper.
 # These are used to detect when an API key has failed (e.g., due to rate limits).
-from google.api_core.exceptions import ResourceExhausted, PermissionDenied
+from google.api_core.exceptions import ResourceExhausted, PermissionDenied, InvalidArgument
 from langchain_google_genai._common import GoogleGenerativeAIError
 
 # Get a logger instance for this file.
@@ -55,6 +55,18 @@ class ApiKeyManager:
         with self.lock:
             return self.keys[self.current_key_index]
 
+    def get_current_index(self) -> int:
+        """Safely get the index of the currently active API key."""
+        with self.lock:
+            return self.current_key_index
+
+    def get_masked_key(self, key=None) -> str:
+        """Returns a masked version of a key for safe logging (e.g., '...1a2b')."""
+        key_to_mask = key or self.get_key()
+        if not key_to_mask or len(key_to_mask) < 4:
+            return "INVALID_OR_SHORT_KEY"
+        return f"...{key_to_mask[-4:]}"
+
     def rotate_key(self) -> str:
         """Rotate to the next key in the list and return it."""
         # This block ensures that the rotation logic is atomic and thread-safe.
@@ -62,10 +74,11 @@ class ApiKeyManager:
             # Use the modulo operator to cycle through the keys.
             # (0+1)%3=1, (1+1)%3=2, (2+1)%3=0. This wraps the index back to the start.
             self.current_key_index = (self.current_key_index + 1) % len(self.keys)
-            logger.warning(
-                f"API key rotated. Now using key index {self.current_key_index}."
+            new_key = self.keys[self.current_key_index]
+            logger.info(
+                f"🔑 Rotated to new API key (Index: {self.current_key_index}) ending in '{self.get_masked_key(new_key)}'."
             )
-            return self.keys[self.current_key_index]
+            return new_key
 
 
 # Create a single, global instance for the application to use.
@@ -92,20 +105,38 @@ def with_api_key_rotation(func):
             except (
                 ResourceExhausted,
                 PermissionDenied,
+                InvalidArgument,
                 GoogleGenerativeAIError,
             ) as e:
                 # If the API call fails with a key-related error, catch it.
-                logger.warning(
-                    f"API call failed with key index {api_key_manager.current_key_index}. Reason: {e}"
-                )
+                failed_key_masked = api_key_manager.get_masked_key()
+                failed_key_index = api_key_manager.get_current_index()
+
+                if isinstance(e, ResourceExhausted):
+                    logger.warning(
+                        f"API key (Index: {failed_key_index}) ending in '{failed_key_masked}' has reached its daily quota or is rate-limited (ResourceExhausted)."
+                    )
+                elif isinstance(e, (PermissionDenied, InvalidArgument)):
+                    logger.error(
+                        f"API key (Index: {failed_key_index}) ending in '{failed_key_masked}' is INVALID or EXPIRED. Reason: {type(e).__name__}."
+                    )
+                elif isinstance(e, GoogleGenerativeAIError):
+                    logger.error(
+                        f"API key (Index: {failed_key_index}) ending in '{failed_key_masked}' failed with a generic Gemini error. It might be invalid. Reason: {type(e).__name__}."
+                    )
+                else:
+                    # Fallback for any other unexpected errors
+                    logger.warning(f"API call failed with key (Index: {failed_key_index}) ending in '{failed_key_masked}'. Error: {type(e).__name__}.")
+
                 # If we've already tried the last key in our list, give up and raise the error.
                 if i == len(api_key_manager.keys) - 1:
-                    logger.error(
-                        "All API keys have failed. No more keys to rotate to."
+                    logger.critical(
+                        "All API keys have failed. No more keys to rotate to. Aborting operation."
                     )
                     raise e
                 # Otherwise, rotate to the next key. The loop will then retry the function call.
                 api_key_manager.rotate_key()
+
         # This line should theoretically not be reached if there's at least one key, but it's a safeguard.
         raise Exception("Failed to execute function after trying all API keys.")
 
