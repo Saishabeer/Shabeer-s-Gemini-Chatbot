@@ -32,39 +32,6 @@
     --border-success: #66cc66;
 }
 
-html.dark-theme {
-    --bg-body: #36393f;
-    --bg-surface: #2f3136;
-    --bg-sidebar: #202225;
-    --bg-hover: #3a3c41;
-    --bg-assistant-msg: #40444b;
-
-    --accent-primary: #7289da; /* Discord-like blue, good on dark backgrounds */
-    --accent-hover: #677bc4;
-    --bg-icon-hover: rgba(255, 255, 255, 0.08);
-
-    --text-primary: #dcddde;
-    --text-secondary: #b9bbbe;
-    --text-tertiary: #8e9297;
-    --text-placeholder: #72767d;
-
-    --border-primary: #2c2e33;
-    --border-input: #40444b;
-
-    --icon-primary: #b9bbbe;
-    --icon-hover: #ffffff;
-
-    --shadow-primary: 0px 6px 18px rgba(0, 0, 0, 0.2);
-
-    --bg-error: rgba(240, 71, 71, 0.1);
-    --text-error: #f04747;
-    --border-error: rgba(240, 71, 71, 0.3);
-    --bg-success: rgba(67, 181, 129, 0.1);
-    --text-success: #43b581;
-    --border-success: rgba(67, 181, 129, 0.3);
-}
-
-
 /* --- GLOBAL STYLES --- */
 * {
     margin: 0;

@@ -4,27 +4,6 @@ document.addEventListener('DOMContentLoaded', (event) => {
     const promptInput = promptForm.querySelector('input[name="prompt"]');
     const sendButton = promptForm.querySelector('button[type="submit"]');
 
-    // --- Theme Toggling Logic ---
-    const themeToggle = document.getElementById('theme-toggle');
-    if (themeToggle) {
-        const htmlElement = document.documentElement;
-        const applyTheme = (theme) => {
-            htmlElement.classList.toggle('dark-theme', theme === 'dark');
-        };
-
-        const savedTheme = localStorage.getItem('theme');
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const currentTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-
-        applyTheme(currentTheme);
-
-        themeToggle.addEventListener('click', () => {
-            const newTheme = htmlElement.classList.contains('dark-theme') ? 'light' : 'dark';
-            applyTheme(newTheme);
-            localStorage.setItem('theme', newTheme);
-        });
-    }
-
     // --- Helper Functions ---
     const scrollToBottom = () => {
         if (messageArea) {
