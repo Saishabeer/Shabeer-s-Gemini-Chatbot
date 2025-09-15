@@ -54,14 +54,4 @@ This will set up the necessary database tables for users, chat sessions, and mes
 4. Use the paperclip icon (📎) to upload a document (.pdf, .txt, etc.).
 5. The AI will now have knowledge of this document for all your future chats.5.Type your questions in the prompt box and get real-time answers!
 
- 📡 API Endpoints
- 
- The application provides a REST API for programmatic access.
- Authentication is required for all endpoints.•POST /api/upload/: 
- Upload a document.•POST /api/chat/<session_id>/query/: 
- Send a prompt to a specific chat session.•GET /api/chat/<session_id>/history/:
- Retrieve the message history for a session.
- DELETE /api/chat/<session_id>/delete/: Delete a chat session.
- 
- 
  Happy coding! 🚀

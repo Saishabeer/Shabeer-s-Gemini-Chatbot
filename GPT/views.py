@@ -1,6 +1,10 @@
 # --- Python Standard Library Imports ---
 import gc
 import logging
+# --- Imports for Speech-to-Text ---
+import os
+import shutil
+import tempfile
 
 # --- Django Core Imports ---
 from django.contrib import messages
@@ -8,6 +12,12 @@ from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required
 from django.http import StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
+
+# --- Imports for Speech-to-Text View ---
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from pydub import AudioSegment
+import speech_recognition as sr
 
 # --- Third-Party Library Imports ---
 # Specific exceptions from the Google API client to handle API-related errors gracefully.
@@ -20,10 +30,9 @@ from .gemini_service import gemini_chat_stream
 from .models import ChatMessage, ChatSession
 # Helper functions for the Retrieval-Augmented Generation (RAG) service.
 from .rag_service import (
-    delete_vectorstore_for_session,
-    get_rag_context,
-    has_vectorstore,
-    ingest_document_for_session
+    get_rag_context_for_user,
+    has_vectorstore_for_user,
+    ingest_document_for_user
 )
 # A specific error from the LangChain Google GenAI library.
 from langchain_google_genai._common import GoogleGenerativeAIError
@@ -66,7 +75,7 @@ def register(request):
     else:
         # Create a blank instance of the registration form.
         form = UserRegistrationForm()
-    
+
     # Render the registration page template with the form.
     return render(request, 'register.html', {'form': form})
 
@@ -86,11 +95,11 @@ def user_login(request):
             # Get the cleaned email and password from the form.
             email = form.cleaned_data.get('username').lower().strip()
             password = form.cleaned_data.get('password')
-            
+
             # Use Django's authenticate() function to check credentials against the database.
             # We pass the email as the 'username' because we configured it in our custom User model.
             user = authenticate(request, username=email, password=password)
-            
+
             # If authenticate() returns a user object, credentials are correct.
             if user is not None:
                 # Log the user in, creating a session.
@@ -119,6 +128,66 @@ def user_logout(request):
     messages.info(request, "You have been successfully logged out.")
     # Redirect to the login page.
     return redirect('login')
+
+
+@login_required
+def speech_to_text_view(request):
+    """
+    Accepts an uploaded WAV audio file, transcribes it using the
+    speech_recognition library, and returns the text as JSON.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "POST method required"}, status=405)
+
+    if "audio" not in request.FILES:
+        logger.warning("Speech-to-text request received without an audio file.")
+        return JsonResponse({"error": "No audio file was uploaded."}, status=400)
+
+    audio_file = request.FILES["audio"]
+    logger.info(f"Received audio upload for transcription: name={audio_file.name}, size={audio_file.size}")
+
+    # The client-side JS is already sending a properly formatted WAV file,
+    # so we don't need pydub for conversion here, just for reading.
+    # We will use the speech_recognition library's native file handling.
+
+    recognizer = sr.Recognizer()
+    temp_audio_path = None
+
+    try:
+        # Save the uploaded InMemoryUploadedFile to a temporary file on disk
+        # so speech_recognition can open it by path.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_f:
+            for chunk in audio_file.chunks():
+                temp_f.write(chunk)
+            temp_audio_path = temp_f.name
+
+        # Use the temporary file with AudioFile context manager
+        with sr.AudioFile(temp_audio_path) as source:
+            audio_data = recognizer.record(source)
+
+        logger.info("Calling recognizer.recognize_google() for transcription.")
+        # Transcribe the audio data using Google's Web Speech API
+        transcript = recognizer.recognize_google(audio_data)
+        logger.info(f"Transcription successful: '{transcript}'")
+
+        return JsonResponse({"text": transcript})
+
+    except sr.UnknownValueError:
+        logger.warning("SpeechRecognition could not understand the audio.")
+        return JsonResponse({"error": "Could not understand the audio. Please try speaking more clearly."}, status=400)
+    except sr.RequestError as e:
+        logger.exception("SpeechRecognition request error.")
+        return JsonResponse({"error": f"Could not request results from the speech recognition service: {e}"}, status=500)
+    except Exception as e:
+        logger.exception("An unexpected error occurred during speech-to-text processing.")
+        return JsonResponse({"error": f"An unexpected server error occurred: {e}"}, status=500)
+    finally:
+        # Clean up the temporary file
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.remove(temp_audio_path)
+            except Exception as e:
+                logger.error(f"Failed to delete temporary audio file {temp_audio_path}: {e}")
 
 
 # --- Chat View ---
@@ -155,36 +224,55 @@ def chat_view(request, session_id=None):
         # --- File Upload Handling ---
         if uploaded_file:
             logger.info(f"File uploaded: {uploaded_file.name} by user {request.user.id}")
+            is_new_session = False
 
             # If there's no active session, create a new one and set its title to the filename.
             if not target_session:
                 target_session = ChatSession.objects.create(user=request.user, title=uploaded_file.name)
+                is_new_session = True
             # If there is an active session but its title is the default, update it.
             elif target_session.title == 'New Chat':
                 target_session.title = uploaded_file.name
                 target_session.save()
 
             try:
-                # Use the model's helper method to save the document's content and metadata to the database.
-                target_session.save_document(uploaded_file)
-                
-                # Call the RAG service to process the document and create/update the vector store.
-                ingest_document_for_session(target_session.id)
-                
+                # Save uploaded file to a temporary path to pass to the ingestion service
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_f:
+                    for chunk in uploaded_file.chunks():
+                        temp_f.write(chunk)
+                    temp_file_path = temp_f.name
+
+                # Call the RAG service to process the document for the current USER.
+                ingest_document_for_user(user_id=request.user.id, file_path=temp_file_path)
+
+                # Clean up the temporary file after ingestion
+                os.unlink(temp_file_path)
+
+                # Create a user message to reflect the upload in the chat history
+                ChatMessage.objects.create(
+                    session=target_session,
+                    role='user',
+                    content=f"📎 Uploaded: {uploaded_file.name}"
+                )
                 # Create a "system" message to inform the user the file is ready.
+                system_message_content = f"Document '{uploaded_file.name}' was uploaded and is ready for questions."
                 ChatMessage.objects.create(
                     session=target_session,
                     role='system',
-                    content=f"Document '{uploaded_file.name}' was uploaded and is ready for questions."
+                    content=system_message_content
                 )
-                
+
+                response_data = {'system_message': system_message_content}
+                if is_new_session:
+                    response_data['new_session_id'] = target_session.id
+                    response_data['new_session_title'] = target_session.title
+                return JsonResponse(response_data)
+
             except Exception as e:
                 logger.error(f"Error processing document for session {target_session.id}: {e}", exc_info=True)
-                messages.error(request, f"Sorry, there was an error processing your document: {e}")
-                target_session.delete()
-                return redirect('home')
-
-            return redirect('chat_session', session_id=target_session.id)
+                if target_session and is_new_session:
+                    target_session.delete()
+                return JsonResponse({'error': f"Sorry, there was an error processing your document: {e}"}, status=500)
 
         # --- Prompt Handling ---
         if prompt:
@@ -266,8 +354,8 @@ Standalone Question:"""
                     # Only perform searches if it's not a simple greeting.
                     if not is_simple_query:
                         # First, search the uploaded document's vector store.
-                        if has_vectorstore(target_session.id):
-                            doc_snippets = get_rag_context(search_query, target_session.id)
+                        if has_vectorstore_for_user(request.user.id):
+                            doc_snippets = get_rag_context_for_user(search_query, request.user.id)
                             if doc_snippets:
                                 doc_context = "\n\n".join(doc_snippets)
 
@@ -370,17 +458,14 @@ Keep track of the current conversation to keep answers relevant. Remember user p
 
 @login_required
 def delete_chat_session(request, session_id):
-    """Deletes a chat session and its associated vector store."""
+    """Deletes a chat session."""
     # Get the session, ensuring it belongs to the current user.
     session = get_object_or_404(ChatSession, id=session_id, user=request.user)
     # This action should only be triggered by a POST request for security.
     if request.method == "POST":
-        sid = session.id
         # Deleting the session object will also delete all its messages
         # because of the `on_delete=models.CASCADE` setting in the ChatMessage model.
         session.delete()
-        # Crucially, also delete the associated vector store from the filesystem.
-        delete_vectorstore_for_session(sid)
         messages.success(request, "Chat session deleted.")
     # Redirect back to the home page after deletion.
     return redirect('home')

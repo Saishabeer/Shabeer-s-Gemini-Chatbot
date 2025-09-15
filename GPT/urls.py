@@ -11,4 +11,7 @@ urlpatterns = [
     path('login/', views.user_login, name='login'),
     path('logout/', views.user_logout, name='logout'),
     path("chat/<int:session_id>/delete/", views.delete_chat_session, name="delete_chat_session"),
+
+    # URL for the speech-to-text functionality
+    path('speech-to-text/', views.speech_to_text_view, name='speech_to_text'),
 ]

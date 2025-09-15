@@ -6,24 +6,18 @@
     --bg-hover: #f0f0f0;
     --bg-assistant-msg: #f1f1f1;
     --bg-icon-hover: rgba(0, 0, 0, 0.1);
-
     --text-primary: #333333;
     --text-secondary: #555555;
     --text-tertiary: #666666;
     --text-placeholder: #aaa;
     --text-on-accent: #ffffff;
-
     --accent-primary: #5865f2;
     --accent-hover: #4650d4;
-
     --border-primary: #e9e9e9;
     --border-input: #cccccc;
-
     --icon-primary: #888888;
     --icon-hover: #333333;
-
-    --shadow-primary: 0px 6px 18px rgba(0, 0, 0, 0.1);
-
+    --shadow-primary: 0 6px 18px rgba(0, 0, 0, 0.1);
     --bg-error: #ffdddd;
     --text-error: #b30000;
     --border-error: #ff5c5c;
@@ -449,11 +443,49 @@ html.dark-theme #theme-icon-moon {
     flex-grow: 1;
 }
 
-.prompt-form button {
+.prompt-form .mic-btn {
+    width: auto;
+    padding: 10px;
+    margin: 0 0 0 10px;
+    background: transparent;
+    border: 1px solid var(--border-input);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.3s, border-color 0.3s;
+}
+
+.prompt-form .mic-btn:hover {
+    background-color: var(--bg-hover);
+}
+
+.prompt-form .mic-btn svg {
+    stroke: var(--text-secondary);
+}
+
+.prompt-form .mic-btn.listening {
+    background-color: var(--accent-primary);
+    border-color: var(--accent-primary);
+}
+
+.prompt-form .mic-btn.listening svg {
+    stroke: var(--text-on-accent);
+}
+
+.prompt-form .send-btn {
     width: auto;
     margin: 0;
     margin-left: 10px;
     padding: 0 25px;
+}
+
+.prompt-form #audio-preview {
+    height: 42px; /* Match input height */
+    margin-left: 10px;
+    max-width: 200px;
+    border-radius: 8px;
 }
 
 /* --- CODE BLOCK STYLES --- */

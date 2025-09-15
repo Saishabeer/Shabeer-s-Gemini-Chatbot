@@ -34,52 +34,29 @@ def get_gemini_embeddings():
     )
 
 
-def has_vectorstore(session_id: int) -> bool:
-    """Check if a vector store directory exists for a given session."""
-    vectorstore_path = settings.CHROMA_DIR / f"session_{session_id}"
+def has_vectorstore_for_user(user_id: int) -> bool:
+    """Check if a vector store directory exists for a given user."""
+    vectorstore_path = settings.CHROMA_DIR / f"user_{user_id}"
     return vectorstore_path.exists() and any(vectorstore_path.iterdir())
-
-
-def delete_vectorstore_for_session(session_id: int):
-    """Deletes the Chroma vector store directory for a session."""
-    if has_vectorstore(session_id):
-        vectorstore_path = settings.CHROMA_DIR / f"session_{session_id}"
-        try:
-            shutil.rmtree(vectorstore_path)
-            logger.info(f"Deleted vector store for session {session_id}.")
-        except OSError as e:
-            logger.error(f"Error deleting vector store for session {session_id}: {e}", exc_info=True)
 
 
 # ✅ Ingest documents using the free Gemini embedding model
 @with_api_key_rotation
-def ingest_document_for_session(session_id: int, file_path: str = None):
+def ingest_document_for_user(user_id: int, file_path: str):
     """
     Loads a document, splits it, generates embeddings using the free Gemini model,
-    and stores them in Chroma vector database.
+    and stores them in Chroma vector database for a specific user.
     """
     from .models import ChatSession
 
-    chat_session = ChatSession.objects.get(id=session_id)
-    vectorstore_path = str(settings.CHROMA_DIR / f"session_{session_id}")
-    temp_f = None
+    vectorstore_path = str(settings.CHROMA_DIR / f"user_{user_id}")
 
     try:
         # Handle file input
-        if file_path and os.path.exists(file_path):
-            full_file_path = Path(file_path)
-            document_name = full_file_path.name
-        else:
-            if not chat_session.document_content or not chat_session.document_name:
-                raise ValueError("No document content found in the session to process.")
-
-            file_extension = Path(chat_session.document_name).suffix.lower()
-            document_name = chat_session.document_name
-
-            temp_f = tempfile.NamedTemporaryFile(suffix=file_extension, delete=False)
-            temp_f.write(chat_session.document_content)
-            temp_f.close()
-            full_file_path = Path(temp_f.name)
+        if not file_path or not os.path.exists(file_path):
+            raise ValueError("A valid file path must be provided for ingestion.")
+        full_file_path = Path(file_path)
+        document_name = full_file_path.name
 
         # Validate file
         if not full_file_path.exists() or os.path.getsize(full_file_path) == 0:
@@ -114,43 +91,40 @@ def ingest_document_for_session(session_id: int, file_path: str = None):
         embedding_function = get_gemini_embeddings()
 
         # Store embeddings in Chroma
-        if has_vectorstore(session_id):
+        if has_vectorstore_for_user(user_id):
             vector_store = Chroma(
                 persist_directory=vectorstore_path,
                 embedding_function=embedding_function
             )
             vector_store.add_documents(documents=chunks)
-            logger.info(f"Added {len(chunks)} new chunks to existing vector store for session {session_id}.")
+            logger.info(f"Added {len(chunks)} new chunks to existing vector store for user {user_id}.")
         else:
             Chroma.from_documents(
                 documents=chunks,
                 embedding=embedding_function,
                 persist_directory=vectorstore_path
             )
-            logger.info(f"Created new vector store for session {session_id}.")
+            logger.info(f"Created new vector store for user {user_id}.")
 
     except Exception as e:
-        logger.error(f"Error during document ingestion for session {session_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error during document ingestion for user {user_id}: {str(e)}", exc_info=True)
         raise
     finally:
-        if temp_f:
-            try:
-                os.unlink(str(full_file_path))
-            except Exception as e:
-                logger.warning(f"Could not delete temp file {full_file_path}: {e}")
+        # The calling view is now responsible for cleaning up the temp file
+        pass
 
 
 # ✅ Retrieve relevant chunks using free Gemini embedding
 @with_api_key_rotation
-def get_rag_context(query: str, session_id: int, top_k: int = 4) -> List[str]:
+def get_rag_context_for_user(query: str, user_id: int, top_k: int = 4) -> List[str]:
     """
     Retrieves relevant chunks from the vector store for a query using free Gemini embeddings.
     """
-    if not has_vectorstore(session_id):
-        logger.debug(f"No vectorstore found for session {session_id}.")
+    if not has_vectorstore_for_user(user_id):
+        logger.debug(f"No vectorstore found for user {user_id}.")
         return []
 
-    vectorstore_path = str(settings.CHROMA_DIR / f"session_{session_id}")
+    vectorstore_path = str(settings.CHROMA_DIR / f"user_{user_id}")
     embedding_function = get_gemini_embeddings()
 
     vector_store = Chroma(
@@ -167,5 +141,5 @@ def get_rag_context(query: str, session_id: int, top_k: int = 4) -> List[str]:
         snippet = f"Source: {source}\nContent: {doc.page_content}"
         context_snippets.append(snippet)
 
-    logger.info(f"Retrieved {len(context_snippets)} relevant chunks for session {session_id}.")
+    logger.info(f"Retrieved {len(context_snippets)} relevant chunks for user {user_id}.")
     return context_snippets
