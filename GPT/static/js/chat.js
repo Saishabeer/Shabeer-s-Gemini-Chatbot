@@ -11,18 +11,7 @@ document.addEventListener('DOMContentLoaded', (event) => {
         }
     };
 
-    const renderContent = (element) => {
-        const rawMarkdown = element.textContent || '';
-        if (!rawMarkdown.trim()) {
-            element.textContent = 'Sorry, I couldn\'t generate a response.';
-            return;
-        }
-        if (typeof marked !== 'undefined') {
-            element.innerHTML = marked.parse(rawMarkdown);
-        } else {
-            console.error("marked.js is not loaded. Cannot render markdown.");
-            element.innerHTML = rawMarkdown.replace(/\n/g, '<br>');
-        }
+    const applySyntaxHighlighting = (element) => {
         if (typeof hljs !== 'undefined') {
             element.querySelectorAll('pre code').forEach((block) => {
                 hljs.highlightBlock(block);
@@ -30,8 +19,24 @@ document.addEventListener('DOMContentLoaded', (event) => {
         }
     };
 
+    const renderMarkdown = (element, markdown) => {
+        if (!markdown || !markdown.trim()) {
+            element.textContent = 'Sorry, I couldn\'t generate a response.'; // Fallback for empty content
+            return;
+        }
+        if (typeof marked !== 'undefined') {
+            element.innerHTML = marked.parse(markdown);
+        } else {
+            console.error("marked.js is not loaded. Cannot render markdown.");
+            element.textContent = markdown; // Fallback
+        }
+    };
+
     // --- Initial Page Load ---
-    document.querySelectorAll('.message.assistant .message-content').forEach(renderContent);
+    document.querySelectorAll('.message.assistant .message-content').forEach(element => {
+        renderMarkdown(element, element.textContent || '');
+        applySyntaxHighlighting(element);
+    });
     scrollToBottom();
 
     // --- Handle Form Submission (AJAX for Streaming) ---
@@ -71,6 +76,7 @@ document.addEventListener('DOMContentLoaded', (event) => {
         sendButton.disabled = true;
 
         // 4. Fetch and Process Stream
+        let rawResponse = ''; // To accumulate the raw markdown response
         try {
             const response = await fetch(promptForm.action, {
                 method: 'POST',
@@ -81,18 +87,21 @@ document.addEventListener('DOMContentLoaded', (event) => {
             });
 
             if (!response.ok) {
-                throw new Error(`Server responded with status: ${response.status}`);
+                const errorText = await response.text();
+                throw new Error(`Server responded with status: ${response.status}. ${errorText}`);
             }
 
             const newSessionId = response.headers.get('X-Chat-Session-Id');
             const newSessionTitle = response.headers.get('X-Chat-Session-Title');
 
+            // If a new session was created, update the URL and sidebar
             if (newSessionId) {
                 const chatUrlTemplate = promptForm.dataset.chatUrlTemplate;
                 const newUrl = chatUrlTemplate.replace('99999999', newSessionId);
                 window.history.pushState({path: newUrl}, '', newUrl);
                 promptForm.action = newUrl;
 
+                // Update sidebar
                 const chatList = document.querySelector('.chat-list');
                 const noChatsMessage = chatList.querySelector('li[style*="color: #888"]');
                 if (noChatsMessage) noChatsMessage.remove();
@@ -100,6 +109,7 @@ document.addEventListener('DOMContentLoaded', (event) => {
                 const currentActive = chatList.querySelector('.chat-list-item.active');
                 if (currentActive) currentActive.classList.remove('active');
 
+                // Create and prepend the new chat item
                 const newChatItem = document.createElement('li');
                 newChatItem.className = 'chat-list-item active';
                 const deleteUrlTemplate = promptForm.dataset.deleteUrlTemplate;
@@ -121,15 +131,24 @@ document.addEventListener('DOMContentLoaded', (event) => {
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                assistantContent.textContent += decoder.decode(value, { stream: true });
+                rawResponse += decoder.decode(value, { stream: true });
+
+                // Render markdown in real-time as it streams in
+                renderMarkdown(assistantContent, rawResponse);
                 scrollToBottom();
             }
 
         } catch (error) {
             console.error('Streaming or request failed:', error);
-            assistantContent.textContent = 'Sorry, an error occurred while getting the response.';
+            assistantContent.innerHTML = `<div class="error-message">Sorry, an error occurred while getting the response. Please try again.</div>`;
         } finally {
-            renderContent(assistantContent);
+            // Final rendering pass to apply syntax highlighting after the stream is complete.
+            applySyntaxHighlighting(assistantContent);
+
+            // If the final response was empty (and no error occurred), show a fallback message.
+            if (!rawResponse.trim() && !assistantContent.querySelector('.error-message')) {
+                renderMarkdown(assistantContent, '');
+            }
             promptInput.disabled = false;
             sendButton.disabled = false;
             promptInput.focus();
