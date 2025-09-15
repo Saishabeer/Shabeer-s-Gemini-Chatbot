@@ -215,14 +215,25 @@ document.addEventListener('DOMContentLoaded', (event) => {
         }
     }
 
+    // --- Initialize Microphone Button ---
     if (micBtn) {
-        micBtn.addEventListener("click", () => {
-            if (recording) {
-                stopRecordingAndUpload();
-            } else {
-                startRecording();
-            }
-        });
+        const isSecure = window.isSecureContext;
+        const isSupported = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+
+        if (!isSecure) {
+            micBtn.disabled = true;
+            micBtn.title = 'Voice input requires a secure (HTTPS) connection.';
+            debug("Voice input disabled: Page is not on a secure context (HTTPS).");
+        } else if (!isSupported) {
+            micBtn.disabled = true;
+            micBtn.title = 'Your browser does not support voice input.';
+            debug("Voice input disabled: MediaDevices API not supported by this browser.");
+        } else {
+            micBtn.addEventListener("click", () => {
+                if (recording) stopRecordingAndUpload();
+                else startRecording();
+            });
+        }
     } else {
         debug("Microphone button not found.");
     }

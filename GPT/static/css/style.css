@@ -474,6 +474,12 @@ html.dark-theme #theme-icon-moon {
     stroke: var(--text-on-accent);
 }
 
+.prompt-form .mic-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-color: transparent !important; /* Override hover/active states */
+}
+
 .prompt-form .send-btn {
     width: auto;
     margin: 0;
